@@ -2,11 +2,18 @@ const std = @import("std");
 
 pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
+
     const kernel_package = b.dependency("kernel", .{
         .optimize = optimize,
     });
     const kernel = kernel_package.artifact("kernel");
     b.installArtifact(kernel);
+
+    const init_package = b.dependency("init", .{
+        .optimize = optimize,
+    });
+    const init = init_package.artifact("init.elf");
+    b.installArtifact(init);
 
     const QEMU_ARGV = [_][]const u8{
         "qemu-system-riscv64",

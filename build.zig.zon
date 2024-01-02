@@ -7,6 +7,9 @@
         .kernel = .{
             .path = "./kernel",
         },
+        .init = .{
+            .path = "./user/init",
+        },
     },
     .paths = .{
         "build.zig",
