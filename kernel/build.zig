@@ -19,31 +19,4 @@ pub fn build(b: *std.Build) void {
     kernel.code_model = .medium;
     kernel.strip = false;
     b.installArtifact(kernel);
-
-    const QEMU_ARGV = [_][]const u8{
-        "qemu-system-riscv64",
-        "-machine",
-        "virt",
-        "-bios",
-        "default",
-        "-serial",
-        "mon:stdio",
-        "-nographic",
-        "-kernel",
-    };
-
-    const run_cmd = b.addSystemCommand(&QEMU_ARGV);
-    run_cmd.addFileArg(kernel.getEmittedBin());
-    run_cmd.step.dependOn(b.getInstallStep());
-
-    const run_step = b.step("run", "Run the app");
-    run_step.dependOn(&run_cmd.step);
-
-    const debug_cmd = b.addSystemCommand(&QEMU_ARGV);
-    debug_cmd.addFileArg(kernel.getEmittedBin());
-    debug_cmd.addArgs(&[_][]const u8{ "-S", "-s" });
-    debug_cmd.step.dependOn(b.getInstallStep());
-
-    const debug_step = b.step("debug", "Debug the app");
-    debug_step.dependOn(&debug_cmd.step);
 }
