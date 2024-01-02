@@ -10,6 +10,9 @@
         .init = .{
             .path = "./user/init",
         },
+        .elf2tix = .{
+            .path = "./tools/elf2tix",
+        },
     },
     .paths = .{
         "build.zig",
