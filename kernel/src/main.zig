@@ -93,4 +93,10 @@ export fn main() noreturn {
     log.debug("plic_start: {?x}, plic_size: {?x}", .{ plic_start, plic_size });
     log.debug("clint_start: {?x}, clint_size: {?x}", .{ clint_start, clint_size });
     while (true) {}
+
+pub fn panic(msg: []const u8, stack_trace: ?*std.builtin.StackTrace, _: ?usize) noreturn {
+    log.err("PANIC: {s}.\n{?}", .{ msg, stack_trace });
+    while (true) {
+        asm volatile ("wfi");
+    }
 }
