@@ -3,6 +3,7 @@ ENTRY(entry)
 
 SECTIONS {
 	. = 0x80400000;
+	PROVIDE(kernel_linker_start = .);
 
 	.text : {
 		*(.text.entry)
@@ -23,4 +24,6 @@ SECTIONS {
 		*(.sbss .sbss.*)
 		*(.bss .bss.*)
 	}
+
+	PROVIDE(kernel_linker_end = .);
 }
