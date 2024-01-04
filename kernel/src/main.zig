@@ -1,5 +1,6 @@
 const std = @import("std");
 const mm = @import("mm.zig");
+const Process = @import("Process.zig");
 const dtb = @import("dtb");
 const log = std.log;
 const math = std.math;
@@ -47,6 +48,7 @@ export fn main(kernel_physical_start: PhysicalAddress, fdt_physical_start: Physi
     initrd_physical_slice.len = math.divCeil(usize, pr.initrd_size, PAGE_SIZE) catch unreachable;
 
     mm.init(heap_physical_slice, fdt_physical_slice, initrd_physical_slice);
+    Process.init();
 
 }
 
