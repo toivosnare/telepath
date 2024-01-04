@@ -14,8 +14,23 @@ pub const std_options = struct {
     pub const logFn = @import("log.zig").logFn;
 };
 
+const TixHeader = extern struct {
+    magic: [4]u8 = MAGIC,
+    region_amount: u32,
+    entry_point: u64,
 
+    const MAGIC = [4]u8{ 'T', 'I', 'X', 0 };
+};
 
+const TixRegionHeader = packed struct {
+    offset: u64,
+    load_address: u64,
+    size: u64,
+    readable: bool,
+    writable: bool,
+    executable: bool,
+    _padding: u61,
+};
 
 
 extern const kernel_linker_start: u8;
@@ -50,6 +65,66 @@ export fn main(kernel_physical_start: PhysicalAddress, fdt_physical_start: Physi
     mm.init(heap_physical_slice, fdt_physical_slice, initrd_physical_slice);
     Process.init();
 
+    const init_process = Process.allocate() catch @panic("process table full");
+    const page_table: mm.PageTablePtr = @ptrCast(mm.page_allocator.allocate() catch @panic("OOM"));
+    @memset(mem.asBytes(page_table), 0);
+    mm.mapKernel(page_table, kernel_physical_slice);
+    init_process.page_table = page_table;
+
+    const tix_header: *TixHeader = @ptrFromInt(pr.initrd_physical_start);
+    if (!mem.eql(u8, &tix_header.magic, &TixHeader.MAGIC))
+        @panic("Invalid TIX magic.");
+    init_process.register_file.pc = tix_header.entry_point;
+    var region_headers: []TixRegionHeader = undefined;
+    region_headers.ptr = @ptrFromInt(pr.initrd_physical_start + @sizeOf(TixHeader));
+    region_headers.len = tix_header.region_amount;
+    for (region_headers) |rh| {
+        log.debug("{}", .{rh});
+        const region_physical_start: PhysicalAddress = pr.initrd_physical_start + rh.offset;
+        const region: *mm.Region = mm.Region.allocate() catch @panic("region table full");
+
+        var addr: mm.Address = rh.load_address;
+        var region_offset: usize = 0;
+        while (addr < rh.load_address + rh.size) : (addr = mem.alignBackward(mm.Address, addr, PAGE_SIZE) + PAGE_SIZE) {
+            const page_frame: mm.PageFramePtr = mm.page_allocator.allocate() catch @panic("OOM");
+            region.addPageFrame(page_frame) catch @panic("init page frame table full");
+
+            const page_offset = addr % PAGE_SIZE;
+            const byte_count = @min(PAGE_SIZE - page_offset, rh.size - region_offset);
+
+            var dest: []u8 = undefined;
+            dest.ptr = @ptrFromInt(@intFromPtr(page_frame) + page_offset);
+            dest.len = byte_count;
+            const source: [*]u8 = @ptrFromInt(region_physical_start + region_offset);
+            @memcpy(dest, source);
+            log.debug("Copied {} bytes from {*} to {*}", .{ byte_count, source, dest.ptr });
+
+            region_offset += byte_count;
+        }
+
+        _ = init_process.addMapping(.{
+            .region = region,
+            .start_address = mem.alignBackward(VirtualAddress, rh.load_address, PAGE_SIZE),
+            .readable = rh.readable,
+            .writable = rh.writable,
+            .executable = rh.executable,
+        }) catch @panic("init mapping table full");
+    }
+    mm.page_allocator.freeSlice(initrd_physical_slice);
+
+    const fdt_region = mm.Region.allocate() catch @panic("region table full");
+    fdt_region.addPageFrames(fdt_physical_slice) catch @panic("init fdt page frame table full");
+    const fdt_mapping = init_process.addMapping(.{
+        .region = fdt_region,
+        .readable = true,
+        .writable = true,
+        .executable = false,
+    }) catch @panic("init mapping table full");
+    const fdt_page_offset = fdt_physical_start % PAGE_SIZE;
+    const fdt_virtual_start = fdt_mapping.start_address + fdt_page_offset;
+    init_process.register_file.a0 = fdt_virtual_start;
+
+    while (true) {}
 }
 
 const FdtParseResult = struct {

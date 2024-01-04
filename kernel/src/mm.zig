@@ -59,10 +59,54 @@ pub const PageTableEntryPtr = *align(@sizeOf(PageTableEntry)) PageTableEntry;
 pub const PageTable = [PAGE_SIZE / @sizeOf(PageTableEntry)]PageTableEntry;
 pub const PageTablePtr = *align(PAGE_SIZE) PageTable;
 
+pub var kernel_offset: usize = undefined;
+
 pub fn init(heap: PageFrameSlice, fdt: ConstPageFrameSlice, initrd: ConstPageFrameSlice) void {
     log.info("Initializing memory subsystem.", .{});
     page_allocator.init(heap, fdt, initrd);
     Region.init();
+}
+
+pub fn mapKernel(page_table: PageTablePtr, kernel_physical: ConstPageFrameSlice) void {
+    const kernel_physical_start = @intFromPtr(kernel_physical.ptr);
+    const kernel_virtual_start = kernel_physical_start + 1024 * PAGE_SIZE;
+    assert(mem.isAligned(kernel_virtual_start, PAGE_SIZE));
+    kernel_offset = kernel_virtual_start - kernel_physical_start;
+
+    var kernel_virtual: ConstPageSlice = undefined;
+    kernel_virtual.ptr = @ptrFromInt(kernel_virtual_start);
+    kernel_virtual.len = kernel_physical.len;
+
+    mapRange(page_table, kernel_virtual, kernel_physical, .{ .valid = true, .readable = true, .writable = true, .executable = true });
+}
+
+pub fn mapRange(page_table: PageTablePtr, virtual: ConstPageSlice, physical: ConstPageFrameSlice, permissions: PageTableEntry.Permissions) void {
+    for (virtual, physical) |*v, *p| {
+        mapPage(page_table, @alignCast(v), @alignCast(p), permissions);
+    }
+}
+
+pub fn mapPage(page_table: PageTablePtr, virtual: ConstPagePtr, physical: ConstPageFramePtr, permissions: PageTableEntry.Permissions) void {
+    log.debug("{*} -> {*} {}.", .{ virtual.ptr, physical.ptr, permissions });
+    var pt = page_table;
+    const v = @intFromPtr(virtual);
+    var level: usize = 2;
+    while (level > 0) : (level -= 1) {
+        const index = (v >> @intCast(12 + 9 * level)) & 0b111111111;
+        const pte: PageTableEntryPtr = &pt[index];
+        if (pte.permissions.valid) {
+            pt = pte.physical_page_number.toPageTablePtr();
+        } else {
+            pt = @ptrCast(page_allocator.allocate() catch @panic("OOM"));
+            @memset(mem.asBytes(pt), 0);
+            pte.physical_page_number = PageTableEntry.PhysicalPageNumber.fromPageTablePtr(pt);
+            pte.permissions = .{ .valid = true };
+        }
+    }
+    const leaf_index = (v >> 12) & 0b111111111;
+    const leaf_pte: PageTableEntryPtr = &pt[leaf_index];
+    leaf_pte.physical_page_number = PageTableEntry.PhysicalPageNumber.fromConstPagePtr(physical);
+    leaf_pte.permissions = permissions;
 }
 
 pub fn pageFrameOverlapsSlice(ptr: ConstPageFramePtr, slice: ConstPageFrameSlice) bool {
