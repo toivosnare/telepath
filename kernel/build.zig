@@ -6,6 +6,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const @"dtb.zig" = b.dependency("dtb.zig", .{});
+    const libt = b.dependency("libt", .{});
 
     const kernel = b.addExecutable(.{
         .name = "kernel",
@@ -16,6 +17,7 @@ pub fn build(b: *std.Build) void {
     kernel.addAssemblyFile(.{ .path = "src/entry.s" });
     kernel.setLinkerScript(.{ .path = "src/kernel.ld" });
     kernel.addModule("dtb", @"dtb.zig".module("dtb"));
+    kernel.addModule("libt", libt.module("libt"));
     kernel.code_model = .medium;
     kernel.strip = false;
     b.installArtifact(kernel);

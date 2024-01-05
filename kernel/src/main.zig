@@ -2,6 +2,7 @@ const std = @import("std");
 const mm = @import("mm.zig");
 const Process = @import("Process.zig");
 const dtb = @import("dtb");
+const libt = @import("libt");
 const log = std.log;
 const math = std.math;
 const assert = std.debug.assert;
@@ -9,27 +10,10 @@ const mem = std.mem;
 const PhysicalAddress = mm.PhysicalAddress;
 const VirtualAddress = mm.VirtualAddress;
 const PAGE_SIZE = mm.PAGE_SIZE;
+const tix = libt.tix;
 
 pub const std_options = struct {
     pub const logFn = @import("log.zig").logFn;
-};
-
-const TixHeader = extern struct {
-    magic: [4]u8 = MAGIC,
-    region_amount: u32,
-    entry_point: u64,
-
-    const MAGIC = [4]u8{ 'T', 'I', 'X', 0 };
-};
-
-const TixRegionHeader = packed struct {
-    offset: u64,
-    load_address: u64,
-    size: u64,
-    readable: bool,
-    writable: bool,
-    executable: bool,
-    _padding: u61,
 };
 
 
@@ -71,12 +55,12 @@ export fn main(kernel_physical_start: PhysicalAddress, fdt_physical_start: Physi
     mm.mapKernel(page_table, kernel_physical_slice);
     init_process.page_table = page_table;
 
-    const tix_header: *TixHeader = @ptrFromInt(pr.initrd_physical_start);
-    if (!mem.eql(u8, &tix_header.magic, &TixHeader.MAGIC))
+    const tix_header: *tix.Header = @ptrFromInt(pr.initrd_physical_start);
+    if (!mem.eql(u8, &tix_header.magic, &tix.Header.MAGIC))
         @panic("Invalid TIX magic.");
     init_process.register_file.pc = tix_header.entry_point;
-    var region_headers: []TixRegionHeader = undefined;
-    region_headers.ptr = @ptrFromInt(pr.initrd_physical_start + @sizeOf(TixHeader));
+    var region_headers: []tix.RegionHeader = undefined;
+    region_headers.ptr = @ptrFromInt(pr.initrd_physical_start + @sizeOf(tix.Header));
     region_headers.len = tix_header.region_amount;
     for (region_headers) |rh| {
         log.debug("{}", .{rh});

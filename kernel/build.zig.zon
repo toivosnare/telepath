@@ -2,14 +2,15 @@
     .name = "kernel",
     .version = "0.0.0",
     .minimum_zig_version = "0.11.0",
-
     .dependencies = .{
         .@"dtb.zig" = .{
             .url = "git+https://github.com/toivosnare/dtb.zig.git#858bab41eeadbc86ff42f5665a04bfd69d08a5ef",
             .hash = "12203ee32cf603c123bc5ea9ec7fffc3eeda3570c2ea098220194bb4e64572f51dbe",
         },
+        .libt = .{
+            .path = "../libt",
+        },
     },
-
     .paths = .{
         "build.zig",
         "build.zig.zon",

@@ -1,23 +1,12 @@
 const std = @import("std");
+const libt = @import("libt");
 const elf = std.elf;
 const fs = std.fs;
 const heap = std.heap;
 const io = std.io;
 const process = std.process;
 const assert = std.debug.assert;
-
-const TixHeader = extern struct {
-    magic: [4]u8 = .{ 'T', 'I', 'X', 0 },
-    region_amount: u32,
-    entry_point: u64,
-};
-
-const TixRegionHeader = extern struct {
-    offset: u64,
-    load_address: u64,
-    size: u64,
-    flags: u32,
-};
+const tix = libt.tix;
 
 pub fn main() !void {
     var arena = heap.ArenaAllocator.init(heap.page_allocator);
@@ -44,24 +33,26 @@ pub fn main() !void {
         if (program_header.p_type == elf.PT_LOAD)
             region_amount += 1;
     }
-    const tix_header = TixHeader{
+    const tix_header = tix.Header{
         .region_amount = region_amount,
         .entry_point = elf_header.entry,
     };
     try stdout.writeStruct(tix_header);
 
     // Region headers.
-    var offset: u64 = @sizeOf(TixHeader) + region_amount * @sizeOf(TixRegionHeader);
+    var offset: u64 = @sizeOf(tix.Header) + region_amount * @sizeOf(tix.RegionHeader);
     it.index = 0;
     while (try it.next()) |program_header| {
         if (program_header.p_type != elf.PT_LOAD)
             continue;
         assert(program_header.p_filesz == program_header.p_memsz);
-        const region_header = TixRegionHeader{
+        const region_header = tix.RegionHeader{
             .offset = offset,
             .load_address = program_header.p_vaddr,
             .size = program_header.p_filesz,
-            .flags = program_header.p_flags,
+            .readable = program_header.p_flags & elf.PF_R != 0,
+            .writable = program_header.p_flags & elf.PF_W != 0,
+            .executable = program_header.p_flags & elf.PF_X != 0,
         };
         try stdout.writeStruct(region_header);
         offset += program_header.p_filesz;
