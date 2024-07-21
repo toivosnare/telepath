@@ -19,7 +19,7 @@ const tix = libt.tix;
 
 pub const std_options: std.Options = .{
     .log_level = .debug,
-    .logFn = @import("log.zig").logFn,
+    .logFn = logFn,
 };
 
 extern const kernel_linker_start: u8;
@@ -305,9 +305,31 @@ fn parseFdt(fdt_physical_start: PhysicalAddress) FdtParseResult {
     };
 }
 
-pub fn panic(msg: []const u8, stack_trace: ?*std.builtin.StackTrace, _: ?usize) noreturn {
-    log.err("PANIC: {s}.\n{?}", .{ msg, stack_trace });
+pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
+    log.err("PANIC: {s}.", .{msg});
     while (true) {
         asm volatile ("wfi");
     }
+}
+
+pub fn logFn(
+    comptime level: std.log.Level,
+    comptime scope: @TypeOf(.EnumLiteral),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    const prefix = "[" ++ comptime level.asText() ++ "] " ++ if (scope == std.log.default_log_scope) "" else "(" ++ @tagName(scope) ++ ") ";
+    writer.print(prefix ++ format ++ "\n", args) catch return;
+}
+
+var writer: std.io.AnyWriter = .{ .context = undefined, .writeFn = writeFn };
+
+fn writeFn(_: *const anyopaque, bytes: []const u8) !usize {
+    var ptr = @intFromPtr(bytes.ptr);
+    if (mm.address_translation_on)
+        ptr = mm.physicalFromKernelVirtual(ptr);
+    for (bytes) |b| {
+        if (sbi.legacy.consolePutChar(b) != .SUCCESS) @panic("consolePutChar");
+    }
+    return bytes.len;
 }
