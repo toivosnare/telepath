@@ -2,7 +2,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const mm = @import("../mm.zig");
 const log = std.log;
-const PageFrame = mm.PageFrame;
+const PageSlice = mm.PageSlice;
 const PageFrameSlice = mm.PageFrameSlice;
 const ConstPageFrameSlice = mm.ConstPageFrameSlice;
 
@@ -10,7 +10,7 @@ const MAX_ORDER = 3;
 
 var buckets: *[MAX_ORDER]Bucket = undefined;
 var bitfield: std.PackedIntSlice(u1) = undefined;
-var pages: PageFrameSlice = undefined;
+var pages: PageSlice = undefined;
 var max_nodes: usize = undefined;
 
 const Bucket = struct {
@@ -20,36 +20,84 @@ const Bucket = struct {
 
 const Node = struct {
     const Self = @This();
-    prev: *Self,
-    next: *Self,
+    prev_offset: usize,
+    next_offset: usize,
 
-    pub fn index(self: *Self, order: usize) usize {
+    pub fn init(self: *Self) void {
+        self.prev_offset = 0;
+        self.next_offset = 0;
+    }
+
+    pub fn append(self: *Self, other: *Self) void {
+        const prev = self.getPrev();
+        other.setPrev(prev);
+        other.setNext(self);
+        prev.setNext(other);
+        self.setPrev(other);
+    }
+
+    pub fn remove(self: *Self) void {
+        const prev = self.getPrev();
+        const next = self.getNext();
+        prev.setNext(next);
+        next.setPrev(prev);
+    }
+
+    pub fn pop(self: *Self) ?*Self {
+        const prev = self.getPrev();
+        if (prev == self)
+            return null;
+        prev.remove();
+        return prev;
+    }
+
+    pub fn offsetTo(self: *const Self, other: *const Self) usize {
+        return @intFromPtr(other) -% @intFromPtr(self);
+    }
+
+    pub fn getPrev(self: *const Self) *Self {
+        return @ptrFromInt(@intFromPtr(self) +% self.prev_offset);
+    }
+
+    pub fn getNext(self: *const Self) *Self {
+        return @ptrFromInt(@intFromPtr(self) +% self.next_offset);
+    }
+
+    pub fn setPrev(self: *Self, prev: *Self) void {
+        self.prev_offset = self.offsetTo(prev);
+    }
+
+    pub fn setNext(self: *Self, next: *Self) void {
+        self.next_offset = self.offsetTo(next);
+    }
+
+    pub fn index(self: *const Self, order: usize) usize {
         const offset = @intFromPtr(self) - @intFromPtr(pages.ptr);
         const region_size = @as(usize, 1) << @intCast(MAX_ORDER - order - 1);
         const page_index = offset / mm.PAGE_SIZE;
         return (region_size - 1) * max_nodes + (page_index >> @intCast(order));
     }
 
-    pub fn parentIndex(self: *Self, order: usize) usize {
+    pub fn parentIndex(self: *const Self, order: usize) usize {
         const self_index = self.index(order);
         return (self_index - max_nodes) / 2;
     }
 
-    pub fn parent(self: *Self, order: usize) *Self {
+    pub fn parent(self: *const Self, order: usize) *Self {
         const offset = @intFromPtr(self) - @intFromPtr(pages.ptr);
         const region_size = @as(usize, 1) << @intCast(order + std.math.log2(mm.PAGE_SIZE) + 1);
         const parent_offset = offset & ~(region_size - 1);
         return @ptrFromInt(parent_offset + @intFromPtr(pages.ptr));
     }
 
-    pub fn buddy(self: *Self, order: usize) *Self {
+    pub fn buddy(self: *const Self, order: usize) *Self {
         const offset = @intFromPtr(self) - @intFromPtr(pages.ptr);
         const region_size = @as(usize, 1) << @intCast(order + std.math.log2(mm.PAGE_SIZE));
         const buddy_offset = offset ^ region_size;
         return @ptrFromInt(buddy_offset + @intFromPtr(pages.ptr));
     }
 
-    pub fn flip(self: *Self, order: usize) bool {
+    pub fn flip(self: *const Self, order: usize) bool {
         const parent_index = self.parentIndex(order);
         const old_value = bitfield.get(parent_index);
         const new_value = old_value ^ 1;
@@ -74,7 +122,7 @@ pub fn init(heap: PageFrameSlice, holes: []const ConstPageFrameSlice) void {
 
     buckets = @ptrCast(heap.ptr);
     for (buckets) |*bucket| {
-        listInit(&bucket.free_list);
+        bucket.free_list.init();
         bucket.free_count = 0;
     }
     const bitfield_bytes = std.mem.sliceAsBytes(heap[0..metadata_pages])[buckets_bytes..];
@@ -92,7 +140,7 @@ pub fn init(heap: PageFrameSlice, holes: []const ConstPageFrameSlice) void {
             _ = hole;
         } else {
             const node: *Node = @ptrCast(slice);
-            listPush(&max_order_bucket.free_list, node);
+            max_order_bucket.free_list.append(node);
             max_order_bucket.free_count += 1;
         }
         start = end;
@@ -100,11 +148,11 @@ pub fn init(heap: PageFrameSlice, holes: []const ConstPageFrameSlice) void {
     }
 }
 
-pub fn allocate(requested_order: usize) !PageFrameSlice {
+pub fn allocate(requested_order: usize) !PageSlice {
     log.debug("Allocating node of order {}.", .{requested_order});
     var order = requested_order;
     const node: *Node = while (order < MAX_ORDER) : (order += 1) {
-        if (listPop(&buckets[order].free_list)) |node|
+        if (buckets[order].free_list.pop()) |node|
             break node;
     } else {
         return error.OutOfMemory;
@@ -118,17 +166,17 @@ pub fn allocate(requested_order: usize) !PageFrameSlice {
             break;
 
         order -= 1;
+        buckets[order].free_list.append(node.buddy(order));
         buckets[order].free_count += 1;
-        listPush(&buckets[order].free_list, node.buddy(order));
     }
 
-    var result: PageFrameSlice = undefined;
+    var result: PageSlice = undefined;
     result.ptr = @alignCast(@ptrCast(node));
     result.len = @as(usize, 1) << @intCast(requested_order);
     return result;
 }
 
-pub fn free(slice: PageFrameSlice) void {
+pub fn free(slice: PageSlice) void {
     assert(std.math.isPowerOfTwo(slice.len));
     var order = std.math.log2(slice.len);
     var node: *Node = @ptrCast(slice.ptr);
@@ -137,12 +185,12 @@ pub fn free(slice: PageFrameSlice) void {
     while (order < MAX_ORDER - 1) : (order += 1) {
         if (node.flip(order))
             break;
-        listRemove(node.buddy(order));
+        node.buddy(order).remove();
         buckets[order].free_count -= 1;
         node = node.parent(order);
     }
 
-    listPush(&buckets[order].free_list, node);
+    buckets[order].free_list.append(node);
     buckets[order].free_count += 1;
 }
 
@@ -151,8 +199,8 @@ pub fn dump() void {
     for (0.., buckets) |order, *bucket| {
         log.debug("Order {} free count {}", .{ order, bucket.free_count });
         const head = &bucket.free_list;
-        var node: *Node = head.next;
-        while (node != head) : (node = node.next) {
+        var node: *Node = head.getNext();
+        while (node != head) : (node = node.getNext()) {
             log.debug("\t{*}", .{node});
         }
     }
@@ -161,32 +209,4 @@ pub fn dump() void {
     for (0..bitfield.len) |i| {
         log.debug("\t{}", .{bitfield.get(i)});
     }
-}
-
-fn listInit(list: *Node) void {
-    list.prev = list;
-    list.next = list;
-}
-
-fn listPush(list: *Node, node: *Node) void {
-    const prev = list.prev;
-    node.prev = prev;
-    node.next = list;
-    prev.next = node;
-    list.prev = node;
-}
-
-fn listRemove(node: *Node) void {
-    const prev = node.prev;
-    const next = node.next;
-    prev.next = next;
-    next.prev = prev;
-}
-
-fn listPop(list: *Node) ?*Node {
-    const prev = list.prev;
-    if (prev == list)
-        return null;
-    listRemove(prev);
-    return prev;
 }
