@@ -4,11 +4,15 @@
     .minimum_zig_version = "0.11.0",
     .dependencies = .{
         .@"dtb.zig" = .{
-            .url = "git+https://github.com/toivosnare/dtb.zig.git#858bab41eeadbc86ff42f5665a04bfd69d08a5ef",
-            .hash = "12203ee32cf603c123bc5ea9ec7fffc3eeda3570c2ea098220194bb4e64572f51dbe",
+            .url = "git+https://github.com/toivosnare/dtb.zig.git#60836cb6b61d2f8d51712b7bc193d564fcb240a5",
+            .hash = "12209efd51d9bd6f39ddf3bf50444ca515395b8939735aa94f3e8e2625ca942fcd8c",
         },
         .libt = .{
             .path = "../libt",
+        },
+        .@"zig-sbi" = .{
+            .url = "git+https://github.com/toivosnare/zig-sbi.git#9f459fdd42d45923c21f1d98ce968ad096493548",
+            .hash = "12209edfc23734cdbcf4fe46938826a8488fe1cd6a93929122e77846160c0390dbd1",
         },
     },
     .paths = .{

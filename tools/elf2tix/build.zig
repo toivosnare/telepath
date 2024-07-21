@@ -8,10 +8,10 @@ pub fn build(b: *std.Build) void {
 
     const exe = b.addExecutable(.{
         .name = "elf2tix",
-        .root_source_file = .{ .path = "main.zig" },
+        .root_source_file = b.path("main.zig"),
         .target = target,
         .optimize = optimize,
     });
-    exe.addModule("libt", libt.module("libt"));
+    exe.root_module.addImport("libt", libt.module("libt"));
     b.installArtifact(exe);
 }

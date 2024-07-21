@@ -1,5 +1,4 @@
 OUTPUT_ARCH("riscv")
-ENTRY(entry)
 
 SECTIONS {
 	. = 0x80400000;

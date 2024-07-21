@@ -1,8 +1,7 @@
 const std = @import("std");
-const CrossTarget = std.zig.CrossTarget;
 
 pub fn build(b: *std.Build) void {
-    const target = CrossTarget{ .cpu_arch = .riscv64, .os_tag = .freestanding, .abi = .none };
+    const target = b.resolveTargetQuery(.{ .cpu_arch = .riscv64, .os_tag = .freestanding, .abi = .none });
     const optimize = b.standardOptimizeOption(.{});
 
     const exe = b.addExecutable(.{
@@ -10,6 +9,6 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    exe.addAssemblyFile(.{ .path = "main.s" });
+    exe.addAssemblyFile(b.path("main.s"));
     b.installArtifact(exe);
 }

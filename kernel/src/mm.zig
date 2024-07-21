@@ -7,16 +7,23 @@ pub const Region = @import("mm/Region.zig");
 pub const page_allocator = @import("mm/page_allocator.zig");
 
 pub const PAGE_SIZE = std.mem.page_size;
+pub const MAX_HARTS = 8;
+pub const KERNEL_STACK_SIZE_PER_HART = 8 * PAGE_SIZE;
+pub const KERNEL_STACK_SIZE_TOTAL = MAX_HARTS * KERNEL_STACK_SIZE_PER_HART;
+export var kernel_stack: [KERNEL_STACK_SIZE_TOTAL]u8 linksection(".bss") = undefined;
+
 pub const Address = usize;
-pub const VirtualAddress = Address;
 pub const PhysicalAddress = Address;
+pub const VirtualAddress = Address;
+pub const UserVirtualAddress = VirtualAddress;
+pub const LogicalAddress = VirtualAddress;
+pub const KernelVirtualAddress = VirtualAddress;
 
 pub const Page = [PAGE_SIZE]u8;
 pub const PagePtr = *align(PAGE_SIZE) Page;
 pub const ConstPagePtr = *align(PAGE_SIZE) const Page;
 pub const PageSlice = []align(PAGE_SIZE) Page;
 pub const ConstPageSlice = []align(PAGE_SIZE) const Page;
-
 pub const PageFrame = Page;
 pub const PageFramePtr = PagePtr;
 pub const ConstPageFramePtr = ConstPagePtr;
@@ -59,25 +66,16 @@ pub const PageTableEntryPtr = *align(@sizeOf(PageTableEntry)) PageTableEntry;
 pub const PageTable = [PAGE_SIZE / @sizeOf(PageTableEntry)]PageTableEntry;
 pub const PageTablePtr = *align(PAGE_SIZE) PageTable;
 
+pub const kernel_virtual_start: KernelVirtualAddress = 0xFFFFFFFFFF000000;
+pub const logical_mapping_virtual_start: LogicalAddress = 0xFFFFFFC000000000;
 pub var kernel_offset: usize = undefined;
+pub var logical_mapping_offset: usize = undefined;
+pub var address_translation_on: bool = false;
 
 pub fn init(heap: PageFrameSlice, fdt: ConstPageFrameSlice, initrd: ConstPageFrameSlice) void {
     log.info("Initializing memory subsystem.", .{});
-    page_allocator.init(heap, fdt, initrd);
+    page_allocator.init(heap, &.{ fdt, initrd });
     Region.init();
-}
-
-pub fn mapKernel(page_table: PageTablePtr, kernel_physical: ConstPageFrameSlice) void {
-    const kernel_physical_start = @intFromPtr(kernel_physical.ptr);
-    const kernel_virtual_start = kernel_physical_start + 1024 * PAGE_SIZE;
-    assert(mem.isAligned(kernel_virtual_start, PAGE_SIZE));
-    kernel_offset = kernel_virtual_start - kernel_physical_start;
-
-    var kernel_virtual: ConstPageSlice = undefined;
-    kernel_virtual.ptr = @ptrFromInt(kernel_virtual_start);
-    kernel_virtual.len = kernel_physical.len;
-
-    mapRange(page_table, kernel_virtual, kernel_physical, .{ .valid = true, .readable = true, .writable = true, .executable = true });
 }
 
 pub fn mapRange(page_table: PageTablePtr, virtual: ConstPageSlice, physical: ConstPageFrameSlice, permissions: PageTableEntry.Permissions) void {
@@ -87,7 +85,7 @@ pub fn mapRange(page_table: PageTablePtr, virtual: ConstPageSlice, physical: Con
 }
 
 pub fn mapPage(page_table: PageTablePtr, virtual: ConstPagePtr, physical: ConstPageFramePtr, permissions: PageTableEntry.Permissions) void {
-    log.debug("{*} -> {*} {}.", .{ virtual.ptr, physical.ptr, permissions });
+    // log.debug("{*} -> {*} {}.", .{ virtual.ptr, physical.ptr, permissions });
     var pt = page_table;
     const v = @intFromPtr(virtual);
     var level: usize = 2;
@@ -97,7 +95,7 @@ pub fn mapPage(page_table: PageTablePtr, virtual: ConstPagePtr, physical: ConstP
         if (pte.permissions.valid) {
             pt = pte.physical_page_number.toPageTablePtr();
         } else {
-            pt = @ptrCast(page_allocator.allocate() catch @panic("OOM"));
+            pt = @ptrCast(page_allocator.allocate(0) catch @panic("OOM"));
             @memset(mem.asBytes(pt), 0);
             pte.physical_page_number = PageTableEntry.PhysicalPageNumber.fromPageTablePtr(pt);
             pte.permissions = .{ .valid = true };
@@ -115,4 +113,20 @@ pub fn pageFrameOverlapsSlice(ptr: ConstPageFramePtr, slice: ConstPageFrameSlice
     const slice_start = @intFromPtr(slice.ptr);
     const slice_end = slice_start + slice.len * @sizeOf(PageFrame);
     return ptr_start < slice_end and ptr_end > slice_start;
+}
+
+pub fn kernelVirtualFromPhysical(physical: PhysicalAddress) KernelVirtualAddress {
+    return physical +% kernel_offset;
+}
+
+pub fn physicalFromKernelVirtual(kernel_virtual: KernelVirtualAddress) PhysicalAddress {
+    return kernel_virtual -% kernel_offset;
+}
+
+pub fn logicalFromPhysical(physical: PhysicalAddress) LogicalAddress {
+    return physical +% logical_mapping_offset;
+}
+
+pub fn physicalFromLogical(logical: LogicalAddress) PhysicalAddress {
+    return logical -% logical_mapping_offset;
 }

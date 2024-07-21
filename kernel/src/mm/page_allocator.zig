@@ -210,3 +210,10 @@ pub fn dump() void {
         log.debug("\t{}", .{bitfield.get(i)});
     }
 }
+
+pub fn onAddressTranslationEnabled() void {
+    buckets = @ptrFromInt(mm.logicalFromPhysical(@intFromPtr(buckets)));
+    bitfield.bytes.ptr = @ptrFromInt(mm.logicalFromPhysical(@intFromPtr(bitfield.bytes.ptr)));
+    pages.ptr = @ptrFromInt(mm.logicalFromPhysical(@intFromPtr(pages.ptr)));
+    log.debug("buckets : {*}, bitfield : {*}, pages : {*}", .{ buckets, bitfield.bytes, pages });
+}
