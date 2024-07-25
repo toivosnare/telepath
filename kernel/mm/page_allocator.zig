@@ -135,9 +135,8 @@ pub fn init(heap: PageFrameSlice, holes: []const ConstPageFrameSlice) void {
     while (end <= pages.len) {
         const slice = pages[start..end];
         for (holes) |hole| {
-            // if (mm.pageFrameSlicesOverlap(slice, hole))
-            //     break;
-            _ = hole;
+            if (mm.pageSlicesOverlap(slice, hole))
+                break;
         } else {
             const node: *Node = @ptrCast(slice);
             max_order_bucket.free_list.append(node);

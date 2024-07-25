@@ -73,9 +73,9 @@ pub var logical_mapping_offset: usize = undefined;
 pub var kernel_offset: usize = undefined;
 pub var address_translation_on: bool = false;
 
-pub fn init(heap: PageFrameSlice, fdt: ConstPageFrameSlice, initrd: ConstPageFrameSlice) void {
+pub fn init(heap: PageFrameSlice, holes: []const ConstPageFrameSlice) void {
     log.info("Initializing memory subsystem.", .{});
-    page_allocator.init(heap, &.{ fdt, initrd });
+    page_allocator.init(heap, holes);
     Region.init();
 }
 
@@ -108,12 +108,12 @@ pub fn mapPage(page_table: PageTablePtr, virtual: ConstPagePtr, physical: ConstP
     leaf_pte.permissions = permissions;
 }
 
-pub fn pageFrameOverlapsSlice(ptr: ConstPageFramePtr, slice: ConstPageFrameSlice) bool {
-    const ptr_start = @intFromPtr(ptr);
-    const ptr_end = ptr_start + @sizeOf(PageFrame);
-    const slice_start = @intFromPtr(slice.ptr);
-    const slice_end = slice_start + slice.len * @sizeOf(PageFrame);
-    return ptr_start < slice_end and ptr_end > slice_start;
+pub fn pageSlicesOverlap(a: ConstPageSlice, b: ConstPageSlice) bool {
+    const a_start = @intFromPtr(a.ptr);
+    const a_end = a_start + a.len * @sizeOf(Page);
+    const b_start = @intFromPtr(b.ptr);
+    const b_end = b_start + b.len * @sizeOf(Page);
+    return a_start < b_end and a_end > b_start;
 }
 
 pub fn kernelVirtualFromPhysical(physical: PhysicalAddress) KernelVirtualAddress {
