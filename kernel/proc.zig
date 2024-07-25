@@ -7,6 +7,10 @@ pub const Process = @import("proc/Process.zig");
 const MAX_PROCESSES = 64;
 pub var table: [MAX_PROCESSES]Process = undefined;
 
+pub const HartId = usize;
+pub var hart_id_array: [mm.MAX_HARTS]HartId = undefined;
+pub var hart_ids: []HartId = undefined;
+
 pub fn init() void {
     log.info("Initializing process subsystem.", .{});
     for (1.., &table) |pid, *p| {
@@ -23,6 +27,7 @@ pub fn init() void {
 }
 
 pub fn onAddressTranslationEnabled() *Process {
+    hart_ids.ptr = @ptrFromInt(mm.kernelVirtualFromPhysical(@intFromPtr(hart_ids.ptr)));
     const init_process = &table[0];
     init_process.page_table = @ptrFromInt(mm.logicalFromPhysical(@intFromPtr(init_process.page_table)));
     init_process.region_entries_head = @ptrFromInt(mm.kernelVirtualFromPhysical(@intFromPtr(init_process.region_entries_head.?)));

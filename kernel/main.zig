@@ -2,7 +2,7 @@ const std = @import("std");
 const mm = @import("mm.zig");
 const proc = @import("proc.zig");
 const trap = @import("trap.zig");
-const dtb = @import("dtb");
+const fdt = @import("fdt.zig");
 const libt = @import("libt");
 const sbi = @import("sbi");
 const log = std.log;
@@ -30,21 +30,17 @@ pub const std_options: std.Options = .{
 extern const kernel_linker_start: anyopaque;
 extern const kernel_linker_end: anyopaque;
 
-const HartId = usize;
-var hart_id_array: [mm.MAX_HARTS]HartId = undefined;
-var hart_ids: []HartId = undefined;
-
 export fn bootHartMain(boot_hart_id: usize, fdt_physical_start: PhysicalAddress, kernel_physical_start: PhysicalAddress) noreturn {
     trap.init();
     log.info("Boot hart with id {} booting..", .{boot_hart_id});
     log.debug("fdt_physical_start={x}", .{fdt_physical_start});
     log.debug("kernel_physical_start={x}", .{kernel_physical_start});
 
-    hart_id_array[0] = boot_hart_id;
-    const pr = parseFdt(fdt_physical_start);
-    log.debug("harts: {any}", .{hart_ids});
+    proc.hart_id_array[0] = boot_hart_id;
+    const pr = fdt.parse(fdt_physical_start);
+    log.debug("harts: {any}", .{proc.hart_ids});
     log.debug("fdt: {any}", .{pr});
-    for (hart_ids[1..], 2..) |secondary_hart_id, i|
+    for (proc.hart_ids[1..], 2..) |secondary_hart_id, i|
         sbi.hsm.hartStart(secondary_hart_id, @intFromPtr(&secondaryHartEntry), i) catch @panic("hartStart");
 
     const kernel_size = @intFromPtr(&kernel_linker_end) - @intFromPtr(&kernel_linker_start);
@@ -166,144 +162,6 @@ export fn main() noreturn {
 }
 
 extern fn returnToUserspace(id: Process.Id, register_file: *const Process.RegisterFile) noreturn;
-
-const FdtParseResult = struct {
-    fdt_size: usize,
-    fdt_physical_end: PhysicalAddress,
-    initrd_physical_start: PhysicalAddress,
-    initrd_size: usize,
-    initrd_physical_end: PhysicalAddress,
-    ram_physical_start: PhysicalAddress,
-    ram_size: usize,
-    ram_physical_end: PhysicalAddress,
-    plic_physical_start: PhysicalAddress,
-    plic_size: usize,
-    plic_physical_end: PhysicalAddress,
-    clint_physical_start: PhysicalAddress,
-    clint_size: usize,
-    clint_physical_end: PhysicalAddress,
-};
-fn parseFdt(fdt_physical_start: PhysicalAddress) FdtParseResult {
-    var traverser: dtb.Traverser = undefined;
-    traverser.init(@ptrFromInt(fdt_physical_start)) catch @panic("invalid device tree");
-
-    const State = enum {
-        start,
-        chosen,
-        memory,
-        plic,
-        clint,
-        hart,
-    };
-    var state: State = .start;
-    var initrd_start: ?u32 = null;
-    var initrd_end: ?u32 = null;
-    var memory_start: ?u32 = null;
-    var memory_size: ?u32 = null;
-    var plic_start: ?u32 = null;
-    var plic_size: ?u32 = null;
-    var clint_start: ?u32 = null;
-    var clint_size: ?u32 = null;
-    var hart_count: usize = 1;
-
-    while (true) {
-        const event = traverser.event() catch break;
-        switch (event) {
-            .BeginNode => |b| {
-                if (mem.eql(u8, b, "chosen")) {
-                    state = .chosen;
-                } else if (mem.startsWith(u8, b, "memory")) {
-                    state = .memory;
-                } else if (mem.startsWith(u8, b, "plic")) {
-                    state = .plic;
-                } else if (mem.startsWith(u8, b, "clint")) {
-                    state = .clint;
-                } else if (mem.startsWith(u8, b, "cpu@")) {
-                    state = .hart;
-                }
-            },
-            .Prop => |p| {
-                switch (state) {
-                    .chosen => {
-                        if (mem.eql(u8, p.name, "linux,initrd-start")) {
-                            initrd_start = mem.bigToNative(u32, @as(*const u32, @ptrCast(@alignCast(p.value))).*);
-                        } else if (mem.eql(u8, p.name, "linux,initrd-end")) {
-                            initrd_end = mem.bigToNative(u32, @as(*const u32, @ptrCast(@alignCast(p.value))).*);
-                        }
-                    },
-                    .memory => {
-                        if (mem.eql(u8, p.name, "reg")) {
-                            memory_start = mem.bigToNative(u32, @as(*const u32, @ptrCast(@alignCast(p.value[4..8]))).*);
-                            memory_size = mem.bigToNative(u32, @as(*const u32, @ptrCast(@alignCast(p.value[12..16]))).*);
-                        }
-                    },
-                    .plic => {
-                        if (mem.eql(u8, p.name, "reg")) {
-                            plic_start = mem.bigToNative(u32, @as(*const u32, @ptrCast(@alignCast(p.value[4..8]))).*);
-                            plic_size = mem.bigToNative(u32, @as(*const u32, @ptrCast(@alignCast(p.value[12..16]))).*);
-                        }
-                    },
-                    .clint => {
-                        if (mem.eql(u8, p.name, "reg")) {
-                            clint_start = mem.bigToNative(u32, @as(*const u32, @ptrCast(@alignCast(p.value[4..8]))).*);
-                            clint_size = mem.bigToNative(u32, @as(*const u32, @ptrCast(@alignCast(p.value[12..16]))).*);
-                        }
-                    },
-                    .hart => {
-                        if (mem.eql(u8, p.name, "reg")) {
-                            const hart_id = mem.bigToNative(u32, @as(*const u32, @ptrCast(@alignCast(p.value))).*);
-                            if (hart_id != hart_id_array[0]) {
-                                hart_id_array[hart_count] = hart_id;
-                                hart_count += 1;
-                            }
-                        }
-                    },
-                    else => continue,
-                }
-            },
-            .EndNode => {
-                state = .start;
-            },
-            .End => break,
-        }
-    }
-    if (initrd_start == null) {
-        @panic("initrd start address was not found in the device tree.");
-    } else if (initrd_end == null) {
-        @panic("initrd end address was not found in the device tree.");
-    } else if (initrd_end.? < initrd_start.?) {
-        @panic("initrd end address is before start address.");
-    } else if (memory_start == null) {
-        @panic("memory start address was not found in the device tree.");
-    } else if (memory_size == null) {
-        @panic("memory size was not found in the device tree.");
-    } else if (plic_start == null) {
-        @panic("PLIC start address was not found in the device tree.");
-    } else if (plic_size == null) {
-        @panic("PLIC size was not found in the device tree.");
-    } else if (clint_start == null) {
-        @panic("CLINT start address was not found in the device tree.");
-    } else if (clint_size == null) {
-        @panic("CLINT size was not found in the device tree.");
-    }
-    hart_ids = hart_id_array[0..hart_count];
-    return .{
-        .fdt_size = @intCast(traverser.header.totalsize),
-        .fdt_physical_end = 0,
-        .initrd_physical_start = @intCast(initrd_start.?),
-        .initrd_size = @intCast(initrd_end.? - initrd_start.?),
-        .initrd_physical_end = @intCast(initrd_end.?),
-        .ram_physical_start = @intCast(memory_start.?),
-        .ram_size = @intCast(memory_size.?),
-        .ram_physical_end = @intCast(memory_start.? + memory_size.?),
-        .plic_physical_start = @intCast(plic_start.?),
-        .plic_size = @intCast(plic_size.?),
-        .plic_physical_end = @intCast(plic_start.? + plic_size.?),
-        .clint_physical_start = @intCast(clint_start.?),
-        .clint_size = @intCast(clint_size.?),
-        .clint_physical_end = @intCast(clint_start.? + clint_size.?),
-    };
-}
 
 pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
     log.err("PANIC: {s}.", .{msg});
