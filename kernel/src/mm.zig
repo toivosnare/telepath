@@ -66,10 +66,11 @@ pub const PageTableEntryPtr = *align(@sizeOf(PageTableEntry)) PageTableEntry;
 pub const PageTable = [PAGE_SIZE / @sizeOf(PageTableEntry)]PageTableEntry;
 pub const PageTablePtr = *align(PAGE_SIZE) PageTable;
 
-pub const kernel_virtual_start: KernelVirtualAddress = 0xFFFFFFFFFF000000;
+pub const max_user_virtual: UserVirtualAddress = 0x3FFFFFFFFF;
 pub const logical_mapping_virtual_start: LogicalAddress = 0xFFFFFFC000000000;
-pub var kernel_offset: usize = undefined;
+pub const kernel_virtual_start: KernelVirtualAddress = 0xFFFFFFFFFF000000;
 pub var logical_mapping_offset: usize = undefined;
+pub var kernel_offset: usize = undefined;
 pub var address_translation_on: bool = false;
 
 pub fn init(heap: PageFrameSlice, fdt: ConstPageFrameSlice, initrd: ConstPageFrameSlice) void {
