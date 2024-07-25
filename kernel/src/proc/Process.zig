@@ -1,12 +1,12 @@
 const std = @import("std");
 const log = std.log;
 const assert = std.debug.assert;
-const mm = @import("mm.zig");
-const Process = @This();
+const mm = @import("../mm.zig");
 const Region = mm.Region;
 const UserVirtualAddress = mm.UserVirtualAddress;
 const Page = mm.Page;
 const PageTablePtr = mm.PageTablePtr;
+const Process = @This();
 
 id: Id,
 parent_id: Id,
@@ -18,13 +18,13 @@ page_table: PageTablePtr,
 register_file: RegisterFile,
 
 pub const Id = usize;
-const State = enum {
+pub const State = enum {
     invalid,
     ready,
     running,
     waiting,
 };
-const RegionEntry = struct {
+pub const RegionEntry = struct {
     region: ?*Region,
     start_address: ?UserVirtualAddress,
     permissions: Permissions,
@@ -73,49 +73,6 @@ pub const RegisterFile = extern struct {
 };
 const MAX_CHILDREN = 16;
 const MAX_REGIONS = 16;
-const MAX_PROCESSES = 64;
-
-pub var table: [MAX_PROCESSES]Process = undefined;
-
-pub fn init() void {
-    log.info("Initializing process subsystem.", .{});
-    for (1.., &table) |pid, *p| {
-        p.id = pid;
-        p.state = .invalid;
-        for (&p.children) |*c| {
-            c.* = 0;
-        }
-        for (&p.region_entries) |*re| {
-            re.region = null;
-        }
-        p.region_entries_head = null;
-    }
-}
-
-pub fn onAddressTranslationEnabled() *Process {
-    const init_process = &table[0];
-    init_process.page_table = @ptrFromInt(mm.logicalFromPhysical(@intFromPtr(init_process.page_table)));
-    init_process.region_entries_head = @ptrFromInt(mm.kernelVirtualFromPhysical(@intFromPtr(init_process.region_entries_head.?)));
-    var region_entry: ?*RegionEntry = init_process.region_entries_head;
-    while (region_entry) |re| : (region_entry = re.next) {
-        re.region = @ptrFromInt(mm.kernelVirtualFromPhysical(@intFromPtr(re.region.?)));
-        if (re.prev != null)
-            re.prev = @ptrFromInt(mm.kernelVirtualFromPhysical(@intFromPtr(re.prev.?)));
-        if (re.next != null)
-            re.next = @ptrFromInt(mm.kernelVirtualFromPhysical(@intFromPtr(re.next.?)));
-    }
-    return init_process;
-}
-
-pub fn allocate() !*Process {
-    for (&table) |*p| {
-        if (p.state == .invalid) {
-            p.state = .waiting;
-            return p;
-        }
-    }
-    return error.ProcessTableFull;
-}
 
 pub fn allocateRegion(self: *Process, size: usize, permissions: RegionEntry.Permissions) !*RegionEntry {
     for (&self.region_entries) |*re| {
