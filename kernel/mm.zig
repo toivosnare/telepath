@@ -2,15 +2,11 @@ const std = @import("std");
 const log = std.log;
 const mem = std.mem;
 const assert = std.debug.assert;
+const proc = @import("proc.zig");
+const entry = @import("entry.zig");
 
 pub const Region = @import("mm/Region.zig");
 pub const page_allocator = @import("mm/page_allocator.zig");
-
-pub const PAGE_SIZE = std.mem.page_size;
-pub const MAX_HARTS = 8;
-pub const KERNEL_STACK_SIZE_PER_HART = 8 * PAGE_SIZE;
-pub const KERNEL_STACK_SIZE_TOTAL = MAX_HARTS * KERNEL_STACK_SIZE_PER_HART;
-export var kernel_stack: [KERNEL_STACK_SIZE_TOTAL]u8 linksection(".bss") = undefined;
 
 pub const Address = usize;
 pub const PhysicalAddress = Address;
@@ -34,9 +30,9 @@ pub const PageTableEntry = packed struct {
     permissions: Permissions,
     accessed: bool,
     dirty: bool,
-    _rsw0: u2,
+    _rsw0: u2 = 0,
     physical_page_number: PhysicalPageNumber,
-    _rsw1: u10,
+    _rsw1: u10 = 0,
 
     pub const Permissions = packed struct {
         valid: bool = false,
@@ -72,6 +68,10 @@ pub const kernel_virtual_start: KernelVirtualAddress = 0xFFFFFFFFFF000000;
 pub var logical_mapping_offset: usize = undefined;
 pub var kernel_offset: usize = undefined;
 pub var address_translation_on: bool = false;
+
+const PAGE_SIZE = std.mem.page_size;
+const KERNEL_STACK_SIZE_TOTAL = proc.MAX_HARTS * entry.KERNEL_STACK_SIZE_PER_HART;
+export var kernel_stack: [KERNEL_STACK_SIZE_TOTAL]u8 linksection(".bss") = undefined;
 
 pub fn init(heap: PageFrameSlice, holes: []const ConstPageFrameSlice) void {
     log.info("Initializing memory subsystem.", .{});

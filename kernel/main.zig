@@ -3,6 +3,7 @@ const mm = @import("mm.zig");
 const proc = @import("proc.zig");
 const trap = @import("trap.zig");
 const fdt = @import("fdt.zig");
+const csr = @import("csr.zig");
 const libt = @import("libt");
 const sbi = @import("sbi");
 const log = std.log;
@@ -91,7 +92,7 @@ export fn bootHartMain(boot_hart_id: usize, fdt_physical_start: PhysicalAddress,
     const tix_header: *tix.Header = @ptrFromInt(pr.initrd_physical_start);
     if (!mem.eql(u8, &tix_header.magic, &tix.Header.MAGIC))
         @panic("Invalid TIX magic.");
-    init_process.register_file.pc = tix_header.entry_point;
+    init_process.context.register_file.pc = tix_header.entry_point;
 
     var region_headers: []tix.RegionHeader = undefined;
     region_headers.ptr = @ptrFromInt(pr.initrd_physical_start + @sizeOf(tix.Header));
@@ -133,7 +134,7 @@ export fn bootHartMain(boot_hart_id: usize, fdt_physical_start: PhysicalAddress,
     const fdt_page_address = init_process.mapRegionEntry(fdt_region_entry, null) catch @panic("mapRegionEntry");
     const fdt_page_offset = fdt_physical_start % @sizeOf(Page);
     const fdt_virtual_start = fdt_page_address + fdt_page_offset;
-    init_process.register_file.a0 = fdt_virtual_start;
+    init_process.context.register_file.a0 = fdt_virtual_start;
 
     const satp = (8 << 60) | @intFromPtr(init_process.page_table) >> 12;
     log.debug("satp: {x}", .{satp});
@@ -158,10 +159,13 @@ export fn main() noreturn {
     const init_process = proc.onAddressTranslationEnabled();
 
     log.info("Address translation enabled for boot hart.", .{});
-    returnToUserspace(init_process.id, &init_process.register_file);
+
+    csr.sstatus.clear(.spp);
+    init_process.context.hart_index = 0;
+    returnToUserspace(&init_process.context);
 }
 
-extern fn returnToUserspace(id: Process.Id, register_file: *const Process.RegisterFile) noreturn;
+extern fn returnToUserspace(context: *Process.Context) noreturn;
 
 pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
     log.err("PANIC: {s}.", .{msg});

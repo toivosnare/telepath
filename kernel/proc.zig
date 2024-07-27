@@ -7,8 +7,10 @@ pub const Process = @import("proc/Process.zig");
 const MAX_PROCESSES = 64;
 pub var table: [MAX_PROCESSES]Process = undefined;
 
+pub const MAX_HARTS = 8;
 pub const HartId = usize;
-pub var hart_id_array: [mm.MAX_HARTS]HartId = undefined;
+pub const HartIndex = usize;
+pub var hart_id_array: [MAX_HARTS]HartId = undefined;
 pub var hart_ids: []HartId = undefined;
 
 pub fn init() void {

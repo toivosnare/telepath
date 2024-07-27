@@ -1,35 +1,68 @@
 const std = @import("std");
 const log = std.log;
-const mm = @import("./mm.zig");
-
-const SSI: usize = 1 << 1;
-const STI: usize = 1 << 5;
-const SEI: usize = 1 << 9;
-const STATUS_SIE: usize = 1 << 1;
+const meta = std.meta;
+const mm = @import("mm.zig");
+const csr = @import("csr.zig");
+const proc = @import("proc.zig");
+const libt = @import("libt");
+const Process = proc.Process;
 
 pub fn init() void {
-    asm volatile (
-        \\csrw stvec, %[vec]
-        \\csrw sie, %[mask]
-        \\csrsi sstatus, %[status]
-        :
-        : [vec] "r" (@intFromPtr(&handleTrap)),
-          [mask] "r" (SSI | STI | SEI),
-          [status] "I" (STATUS_SIE),
-    );
+    csr.stvec.write(.{
+        .mode = .direct,
+        .base = @intCast(@intFromPtr(&handleTrap) >> 2),
+    });
+    csr.sie.write(.{
+        .ssie = true,
+        .stie = true,
+        .seie = true,
+        .lcofie = true,
+    });
+    csr.sstatus.set(.sie);
 }
 
 pub fn onAddressTranslationEnabled() void {
-    asm volatile (
-        \\csrw stvec, %[vec]
-        :
-        : [vec] "r" (@intFromPtr(&handleTrap) + mm.kernel_offset),
-    );
+    csr.stvec.write(.{
+        .mode = .direct,
+        .base = @intCast((@intFromPtr(&handleTrap) + mm.kernel_offset) >> 2),
+    });
 }
 
-extern fn handleTrap() callconv(.Naked) noreturn;
+extern fn handleTrap() align(4) callconv(.Naked) noreturn;
 
-export fn handleTrap2(scause: usize, stval: usize) align(4) noreturn {
-    log.debug("Trap: scause={}, stval={x}", .{ scause, stval });
+export fn handleTrap2(context: *Process.Context) noreturn {
+    const process = context.process();
+    const scause = csr.scause.read();
+    if (scause.interrupt) {
+        handleInterrupt(scause.code.interrupt, process);
+    } else {
+        handleException(scause.code.exception, process);
+    }
     @panic("trap");
+}
+
+fn handleInterrupt(code: csr.scause.InterruptCode, process: *Process) void {
+    _ = process;
+    log.debug("Interrupt: code={s}", .{@tagName(code)});
+}
+
+fn handleException(code: csr.scause.ExceptionCode, process: *Process) void {
+    const stval = csr.stval.read();
+    log.debug("Exception: code={s}, stval={x}", .{ @tagName(code), stval });
+    switch (code) {
+        .environment_call_from_u_mode => handleSyscall(process),
+        else => @panic("unhandled exception"),
+    }
+}
+
+fn handleSyscall(process: *Process) void {
+    const syscall_id_int = process.context.register_file.a0;
+    const syscall_id = meta.intToEnum(libt.SyscallId, syscall_id_int) catch {
+        log.warn("Invalid syscall ID {d}", .{syscall_id_int});
+        return;
+    };
+    switch (syscall_id) {
+        .exit => log.debug("Process should exit", .{}),
+        else => @panic("unhandled syscall"),
+    }
 }

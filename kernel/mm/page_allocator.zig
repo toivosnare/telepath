@@ -2,6 +2,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const mm = @import("../mm.zig");
 const log = std.log;
+const Page = mm.Page;
 const PageSlice = mm.PageSlice;
 const PageFrameSlice = mm.PageFrameSlice;
 const ConstPageFrameSlice = mm.ConstPageFrameSlice;
@@ -74,7 +75,7 @@ const Node = struct {
     pub fn index(self: *const Self, order: usize) usize {
         const offset = @intFromPtr(self) - @intFromPtr(pages.ptr);
         const region_size = @as(usize, 1) << @intCast(MAX_ORDER - order - 1);
-        const page_index = offset / mm.PAGE_SIZE;
+        const page_index = offset / @sizeOf(Page);
         return (region_size - 1) * max_nodes + (page_index >> @intCast(order));
     }
 
@@ -85,14 +86,14 @@ const Node = struct {
 
     pub fn parent(self: *const Self, order: usize) *Self {
         const offset = @intFromPtr(self) - @intFromPtr(pages.ptr);
-        const region_size = @as(usize, 1) << @intCast(order + std.math.log2(mm.PAGE_SIZE) + 1);
+        const region_size = @as(usize, 1) << @intCast(order + std.math.log2(@sizeOf(Page)) + 1);
         const parent_offset = offset & ~(region_size - 1);
         return @ptrFromInt(parent_offset + @intFromPtr(pages.ptr));
     }
 
     pub fn buddy(self: *const Self, order: usize) *Self {
         const offset = @intFromPtr(self) - @intFromPtr(pages.ptr);
-        const region_size = @as(usize, 1) << @intCast(order + std.math.log2(mm.PAGE_SIZE));
+        const region_size = @as(usize, 1) << @intCast(order + std.math.log2(@sizeOf(Page)));
         const buddy_offset = offset ^ region_size;
         return @ptrFromInt(buddy_offset + @intFromPtr(pages.ptr));
     }
@@ -118,7 +119,7 @@ pub fn init(heap: PageFrameSlice, holes: []const ConstPageFrameSlice) void {
     const buckets_bits = buckets_bytes * 8;
     const bitfield_bits = ((1 << (MAX_ORDER - 1)) - 1) * max_nodes;
     const metadata_bits = buckets_bits + bitfield_bits;
-    const metadata_pages = std.math.divCeil(usize, metadata_bits, mm.PAGE_SIZE * 8) catch unreachable;
+    const metadata_pages = std.math.divCeil(usize, metadata_bits, @sizeOf(Page) * 8) catch unreachable;
 
     buckets = @ptrCast(heap.ptr);
     for (buckets) |*bucket| {

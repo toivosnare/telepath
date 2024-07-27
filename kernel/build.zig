@@ -9,12 +9,11 @@ pub fn build(b: *std.Build) void {
     const libt = b.dependency("libt", .{});
     const @"zig-sbi" = b.dependency("zig-sbi", .{});
 
-    const mm = @import("mm.zig");
-    const entry_defines = b.addConfigHeader(.{
-        .include_path = "entry_defines.h",
+    const entry = @import("entry.zig");
+    const entry_header = b.addConfigHeader(.{
+        .include_path = "entry.h",
     }, .{
-        .KERNEL_STACK_SIZE_PER_HART = mm.KERNEL_STACK_SIZE_PER_HART,
-        .KERNEL_STACK_SIZE_TOTAL = mm.KERNEL_STACK_SIZE_TOTAL,
+        .KERNEL_STACK_SIZE_PER_HART = entry.KERNEL_STACK_SIZE_PER_HART,
     });
 
     const kernel = b.addExecutable(.{
@@ -28,11 +27,11 @@ pub fn build(b: *std.Build) void {
     });
     kernel.addAssemblyFile(b.path("entry.S"));
     kernel.setLinkerScript(b.path("kernel.ld"));
-    kernel.addIncludePath(entry_defines.getOutput().dirname());
+    kernel.addIncludePath(entry_header.getOutput().dirname());
     kernel.root_module.addImport("dtb", @"dtb.zig".module("dtb"));
     kernel.root_module.addImport("libt", libt.module("libt"));
     kernel.root_module.addImport("sbi", @"zig-sbi".module("sbi"));
     kernel.entry = .{ .symbol_name = "bootHartEntry" };
-    kernel.step.dependOn(&entry_defines.step);
+    kernel.step.dependOn(&entry_header.step);
     b.installArtifact(kernel);
 }
