@@ -1,28 +1,32 @@
 const std = @import("std");
 const log = std.log;
 const assert = std.debug.assert;
+const mem = std.mem;
 const mm = @import("../mm.zig");
 const proc = @import("../proc.zig");
 const Region = mm.Region;
 const UserVirtualAddress = mm.UserVirtualAddress;
 const Page = mm.Page;
-const PageTablePtr = mm.PageTablePtr;
+const PageTable = mm.PageTable;
 const HartIndex = proc.HartIndex;
 const Process = @This();
 
 id: Id,
-parent_id: Id,
-children: [MAX_CHILDREN]Id,
+parent: ?*Process,
+children: Children,
 state: State,
 region_entries: [MAX_REGIONS]RegionEntry,
 region_entries_head: ?*RegionEntry,
-page_table: PageTablePtr,
+page_table: PageTable.Ptr,
 context: Context,
+prev: ?*Process,
+next: ?*Process,
 
 const MAX_CHILDREN = 16;
 const MAX_REGIONS = 16;
 
 pub const Id = usize;
+pub const Children = std.BoundedArray(*Process, MAX_CHILDREN);
 pub const State = enum {
     invalid,
     ready,
@@ -225,7 +229,8 @@ pub fn receiveRegion(self: *Process, region: *Region, permissions: RegionEntry.P
 }
 
 fn freeRegionEntry(self: *Process, region_entry: *RegionEntry) void {
-    assert(region_entry.region != null);
+    if (region_entry.region == null)
+        return;
     if (region_entry.start_address != null) {
         self.unmapRegionEntry(region_entry);
     }
@@ -249,4 +254,20 @@ pub fn unmapRegionEntry(self: *Process, region_entry: *RegionEntry) void {
     // TODO: fix linked list.
     // TODO: unmap from page table.
     region_entry.start_address = null;
+}
+
+pub fn deinit(self: *Process) void {
+    for (self.children.slice()) |child| {
+        child.deinit();
+    }
+    self.state = .invalid;
+    for (&self.region_entries) |*region_entry| {
+        self.freeRegionEntry(region_entry);
+    }
+    self.region_entries_head = null;
+    // TODO: page table?
+    // slef.page_table = ;
+    @memset(mem.asBytes(&self.context), 0);
+    if (self.state == .ready)
+        proc.dequeue(self);
 }

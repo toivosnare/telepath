@@ -1,6 +1,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const mm = @import("../mm.zig");
+const mem = std.mem;
 const log = std.log;
 const Page = mm.Page;
 const PageSlice = mm.PageSlice;
@@ -109,7 +110,7 @@ const Node = struct {
 
 // TODO: bitfield might overlap with the holes?
 // TODO: there might be a case where max_nodes must be decremented by one?
-pub fn init(heap: PageFrameSlice, holes: []const ConstPageFrameSlice) void {
+pub fn init(heap: PageFrameSlice, initrd: *PageFrameSlice, fdt: *PageFrameSlice) void {
     log.info("Initializing page allocator.", .{});
     const MAX_NODE_PAGES = 1 << (MAX_ORDER - 1);
     const heap_pages = std.mem.alignBackward(usize, heap.len, MAX_NODE_PAGES);
@@ -126,7 +127,7 @@ pub fn init(heap: PageFrameSlice, holes: []const ConstPageFrameSlice) void {
         bucket.free_list.init();
         bucket.free_count = 0;
     }
-    const bitfield_bytes = std.mem.sliceAsBytes(heap[0..metadata_pages])[buckets_bytes..];
+    const bitfield_bytes = mem.sliceAsBytes(heap[0..metadata_pages])[buckets_bytes..];
     bitfield = std.PackedIntSlice(u1).init(bitfield_bytes, bitfield_bits);
     pages = heap[metadata_pages..];
 
@@ -135,9 +136,12 @@ pub fn init(heap: PageFrameSlice, holes: []const ConstPageFrameSlice) void {
     var end: usize = MAX_NODE_PAGES;
     while (end <= pages.len) {
         const slice = pages[start..end];
-        for (holes) |hole| {
-            if (mm.pageSlicesOverlap(slice, hole))
-                break;
+        if (mm.pageSlicesOverlap(slice, initrd.*)) {
+            log.debug("{*} overlaps with initrd.", .{slice});
+            break;
+        } else if (mm.pageSlicesOverlap(slice, fdt.*)) {
+            log.debug("{*} overlaps with fdt.", .{slice});
+            break;
         } else {
             const node: *Node = @ptrCast(slice);
             max_order_bucket.free_list.append(node);
@@ -212,8 +216,8 @@ pub fn dump() void {
 }
 
 pub fn onAddressTranslationEnabled() void {
-    buckets = @ptrFromInt(mm.logicalFromPhysical(@intFromPtr(buckets)));
-    bitfield.bytes.ptr = @ptrFromInt(mm.logicalFromPhysical(@intFromPtr(bitfield.bytes.ptr)));
-    pages.ptr = @ptrFromInt(mm.logicalFromPhysical(@intFromPtr(pages.ptr)));
+    buckets = mm.logicalFromPhysical(buckets);
+    bitfield.bytes.ptr = mm.logicalFromPhysical(bitfield.bytes.ptr);
+    pages.ptr = mm.logicalFromPhysical(pages.ptr);
     log.debug("buckets : {*}, bitfield : {*}, pages : {*}", .{ buckets, bitfield.bytes, pages });
 }

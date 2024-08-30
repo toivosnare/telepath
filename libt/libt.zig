@@ -2,5 +2,15 @@ pub const tix = @import("tix.zig");
 
 pub const SyscallId = enum(usize) {
     exit = 0,
-    get_pid = 1,
+    identify = 1,
+    fork = 2,
+    spawn = 3,
+    kill = 4,
+    allocate = 5,
+    map = 6,
+    share = 7,
+    refcount = 8,
+    unmap = 9,
+    wait = 10,
+    wake = 11,
 };

@@ -91,8 +91,21 @@ pub const scause = Csr("scause", packed struct(u64) {
         _,
     };
 });
+pub const satp = Csr("satp", packed struct(u64) {
+    ppn: u44,
+    asid: u16,
+    mode: enum(u4) {
+        no_translation = 0,
+        sv39 = 8,
+        sv48 = 9,
+        sv57 = 10,
+        sv64 = 11,
+        _,
+    },
+});
 
 pub const stval = Csr("stval", u64);
+pub const time = Csr("time", u64);
 
 fn Csr(comptime name: []const u8, comptime T: type) type {
     if (@bitSizeOf(T) != @bitSizeOf(usize))

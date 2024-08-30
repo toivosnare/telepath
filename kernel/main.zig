@@ -46,18 +46,19 @@ export fn bootHartMain(boot_hart_id: usize, fdt_physical_start: PhysicalAddress,
 
     const kernel_size = @intFromPtr(&kernel_linker_end) - @intFromPtr(&kernel_linker_start);
     const kernel_physical_end = kernel_physical_start + kernel_size;
-    const kernel_size_in_pages = math.divCeil(usize, kernel_size, @sizeOf(Page)) catch unreachable;
+    mm.kernel_size = math.divCeil(usize, kernel_size, @sizeOf(Page)) catch unreachable;
     const heap_physical_start = mem.alignForward(PhysicalAddress, kernel_physical_end, @sizeOf(Page));
     const heap_physical_end = mem.alignBackward(PhysicalAddress, pr.ram_physical_end, @sizeOf(Page));
+    mm.logical_size = (heap_physical_end - heap_physical_start) / @sizeOf(Page);
     assert(heap_physical_start < heap_physical_end);
 
     var kernel_physical_slice: ConstPageFrameSlice = undefined;
     kernel_physical_slice.ptr = @ptrFromInt(kernel_physical_start);
-    kernel_physical_slice.len = kernel_size_in_pages;
+    kernel_physical_slice.len = mm.kernel_size;
 
     var heap_physical_slice: PageFrameSlice = undefined;
     heap_physical_slice.ptr = @ptrFromInt(heap_physical_start);
-    heap_physical_slice.len = (heap_physical_end - heap_physical_start) / @sizeOf(Page);
+    heap_physical_slice.len = mm.logical_size;
 
     var fdt_physical_slice: PageFrameSlice = undefined;
     fdt_physical_slice.ptr = @ptrFromInt(mem.alignBackward(PhysicalAddress, fdt_physical_start, @sizeOf(Page)));
@@ -67,27 +68,24 @@ export fn bootHartMain(boot_hart_id: usize, fdt_physical_start: PhysicalAddress,
     initrd_physical_slice.ptr = @ptrFromInt(mem.alignBackward(PhysicalAddress, pr.initrd_physical_start, @sizeOf(Page)));
     initrd_physical_slice.len = math.divCeil(usize, pr.initrd_size, @sizeOf(Page)) catch unreachable;
 
-    var kernel_virtual_slice: ConstPageSlice = undefined;
-    kernel_virtual_slice.ptr = @ptrFromInt(mm.kernel_virtual_start);
-    kernel_virtual_slice.len = kernel_size_in_pages;
-    mm.kernel_offset = mm.kernel_virtual_start -% kernel_physical_start;
+    var kernel_slice: ConstPageSlice = undefined;
+    kernel_slice.ptr = @ptrFromInt(mm.kernel_start);
+    kernel_slice.len = mm.kernel_size;
 
-    var logical_mapping_virtual_slice: ConstPageSlice = undefined;
-    logical_mapping_virtual_slice.ptr = @ptrFromInt(mm.logical_mapping_virtual_start);
-    logical_mapping_virtual_slice.len = heap_physical_slice.len;
-    mm.logical_mapping_offset = mm.logical_mapping_virtual_start -% heap_physical_start;
+    var logical_slice: ConstPageSlice = undefined;
+    logical_slice.ptr = @ptrFromInt(mm.logical_start);
+    logical_slice.len = mm.logical_size;
 
-    mm.init(heap_physical_slice, &.{ fdt_physical_slice, initrd_physical_slice });
+    mm.init(heap_physical_slice, &fdt_physical_slice, &initrd_physical_slice);
     proc.init();
 
-    const init_process = proc.allocate() catch unreachable;
-    init_process.page_table = @ptrCast(mm.page_allocator.allocate(0) catch @panic("OOM"));
-    @memset(mem.asBytes(init_process.page_table), 0);
+    const init_process = proc.allocate() catch @panic("OOM");
+    init_process.context.hart_index = 0;
 
     const trampoline_page: ConstPageFramePtr = @ptrCast(&trampoline);
-    mm.mapPage(init_process.page_table, trampoline_page, trampoline_page, .{ .valid = true, .readable = true, .executable = true });
-    mm.mapRange(init_process.page_table, logical_mapping_virtual_slice, heap_physical_slice, .{ .valid = true, .readable = true, .writable = true, .global = true });
-    mm.mapRange(init_process.page_table, kernel_virtual_slice, kernel_physical_slice, .{ .valid = true, .readable = true, .writable = true, .executable = true, .global = true });
+    init_process.page_table.map(trampoline_page, trampoline_page, .{ .valid = true, .readable = true, .executable = true });
+    init_process.page_table.mapRange(logical_slice, heap_physical_slice, .{ .valid = true, .readable = true, .writable = true, .global = true });
+    init_process.page_table.mapRange(kernel_slice, kernel_physical_slice, .{ .valid = true, .readable = true, .writable = true, .executable = true, .global = true });
 
     const tix_header: *tix.Header = @ptrFromInt(pr.initrd_physical_start);
     if (!mem.eql(u8, &tix_header.magic, &tix.Header.MAGIC))
@@ -121,22 +119,24 @@ export fn bootHartMain(boot_hart_id: usize, fdt_physical_start: PhysicalAddress,
     }
     // mm.page_allocator.freeSlice(initrd_physical_slice);
 
-    const v: ConstPagePtr = @ptrFromInt(mem.alignBackward(UserVirtualAddress, init_process.register_file.pc, @sizeOf(Page)));
+    const v: ConstPagePtr = @ptrFromInt(mem.alignBackward(UserVirtualAddress, init_process.context.register_file.pc, @sizeOf(Page)));
     const entry_region = init_process.region_entries[1].region.?;
-    const p: ConstPagePtr = @ptrCast(entry_region.allocation.ptr);
-    mm.mapPage(init_process.page_table, v, p, .{ .valid = true, .readable = true, .writable = true, .executable = true, .user = true });
+    const p: ConstPageFramePtr = @ptrCast(entry_region.allocation.ptr);
+    init_process.page_table.map(v, p, .{ .valid = true, .readable = true, .writable = true, .executable = true, .user = true });
 
-    const fdt_region = Region.findFree() catch @panic("findFree");
-    fdt_region.ref_count = 1;
+    // const fdt_region = Region.findFree() catch @panic("findFree");
+    // fdt_region.ref_count = 1;
     // fdt_region.allocation = _;
-    fdt_region.size = fdt_physical_slice.len;
-    const fdt_region_entry = init_process.receiveRegion(fdt_region, .{ .readable = true }) catch @panic("receiveRegion");
-    const fdt_page_address = init_process.mapRegionEntry(fdt_region_entry, null) catch @panic("mapRegionEntry");
-    const fdt_page_offset = fdt_physical_start % @sizeOf(Page);
-    const fdt_virtual_start = fdt_page_address + fdt_page_offset;
-    init_process.context.register_file.a0 = fdt_virtual_start;
+    // fdt_region.size = fdt_physical_slice.len;
+    // const fdt_region_entry = init_process.receiveRegion(fdt_region, .{ .readable = true }) catch @panic("receiveRegion");
+    // const fdt_page_address = init_process.mapRegionEntry(fdt_region_entry, null) catch @panic("mapRegionEntry");
+    // const fdt_page_offset = fdt_physical_start % @sizeOf(Page);
+    // const fdt_virtual_start = fdt_page_address + fdt_page_offset;
+    // init_process.context.register_file.a0 = fdt_virtual_start;
 
     const satp = (8 << 60) | @intFromPtr(init_process.page_table) >> 12;
+    mm.logical_offset = mm.logical_start -% heap_physical_start;
+    mm.kernel_offset = mm.kernel_start -% kernel_physical_start;
     log.debug("satp: {x}", .{satp});
     trampoline(satp, 0, mm.kernel_offset);
 }
@@ -152,16 +152,13 @@ export fn secondaryHartMain(hart_id: usize) noreturn {
 extern fn trampoline(satp: usize, hart_index: usize, kernel_offset: usize) align(@sizeOf(Page)) noreturn;
 
 export fn main() noreturn {
-    mm.address_translation_on = true;
     writer.writeFn = writeFn;
     trap.onAddressTranslationEnabled();
     mm.page_allocator.onAddressTranslationEnabled();
     const init_process = proc.onAddressTranslationEnabled();
-
     log.info("Address translation enabled for boot hart.", .{});
-
     csr.sstatus.clear(.spp);
-    init_process.context.hart_index = 0;
+    sbi.time.setTimer(csr.time.read() + 10 * 1_000_000);
     returnToUserspace(&init_process.context);
 }
 
@@ -187,9 +184,6 @@ pub fn logFn(
 var writer: std.io.AnyWriter = .{ .context = undefined, .writeFn = writeFn };
 
 fn writeFn(_: *const anyopaque, bytes: []const u8) !usize {
-    var ptr = @intFromPtr(bytes.ptr);
-    if (mm.address_translation_on)
-        ptr = mm.physicalFromKernelVirtual(ptr);
     for (bytes) |b| {
         if (sbi.legacy.consolePutChar(b) != .SUCCESS) @panic("consolePutChar");
     }

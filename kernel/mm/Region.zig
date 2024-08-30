@@ -2,7 +2,6 @@ const std = @import("std");
 const math = std.math;
 const mm = @import("../mm.zig");
 const Page = mm.Page;
-const PagePtr = mm.PagePtr;
 const PageSlice = mm.PageSlice;
 const Region = @This();
 

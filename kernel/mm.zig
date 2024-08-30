@@ -15,119 +15,150 @@ pub const UserVirtualAddress = VirtualAddress;
 pub const LogicalAddress = VirtualAddress;
 pub const KernelVirtualAddress = VirtualAddress;
 
-pub const Page = [PAGE_SIZE]u8;
-pub const PagePtr = *align(PAGE_SIZE) Page;
-pub const ConstPagePtr = *align(PAGE_SIZE) const Page;
-pub const PageSlice = []align(PAGE_SIZE) Page;
-pub const ConstPageSlice = []align(PAGE_SIZE) const Page;
+pub const Page = [mem.page_size]u8;
+pub const PagePtr = *align(@sizeOf(Page)) Page;
+pub const ConstPagePtr = *align(@sizeOf(Page)) const Page;
+pub const PageSlice = []align(@sizeOf(Page)) Page;
+pub const ConstPageSlice = []align(@sizeOf(Page)) const Page;
 pub const PageFrame = Page;
 pub const PageFramePtr = PagePtr;
 pub const ConstPageFramePtr = ConstPagePtr;
 pub const PageFrameSlice = PageSlice;
 pub const ConstPageFrameSlice = ConstPageSlice;
 
-pub const PageTableEntry = packed struct {
-    permissions: Permissions,
-    accessed: bool,
-    dirty: bool,
-    _rsw0: u2 = 0,
-    physical_page_number: PhysicalPageNumber,
-    _rsw1: u10 = 0,
+pub const PageTable = struct {
+    entries: [entry_count]Entry,
 
-    pub const Permissions = packed struct {
-        valid: bool = false,
-        readable: bool = false,
-        writable: bool = false,
-        executable: bool = false,
-        user: bool = false,
-        global: bool = false,
+    pub const Entry = packed struct(u64) {
+        permissions: Permissions,
+        accessed: bool,
+        dirty: bool,
+        _rsw0: u2 = 0,
+        physical_page_number: PhysicalPageNumber,
+        _rsw1: u10 = 0,
+
+        pub const Permissions = packed struct {
+            valid: bool = false,
+            readable: bool = false,
+            writable: bool = false,
+            executable: bool = false,
+            user: bool = false,
+            global: bool = false,
+        };
     };
-    pub const PhysicalPageNumber = packed struct {
-        ppn: u44,
+    pub const entry_count = @sizeOf(Page) / @sizeOf(Entry);
+    pub const Level = u4;
+    pub const Index = u9;
+    pub const Ptr = *align(@sizeOf(Page)) PageTable;
 
-        pub fn fromPageTablePtr(ptr: PageTablePtr) PhysicalPageNumber {
-            return .{ .ppn = @intCast(@intFromPtr(ptr) >> 12) };
-        }
+    pub fn mapRange(self: Ptr, virtual: ConstPageSlice, physical: ConstPageFrameSlice, permissions: Entry.Permissions) void {
+        for (virtual, physical) |*v, *p|
+            self.map(v, p, permissions);
+    }
 
-        pub fn fromConstPagePtr(ptr: ConstPagePtr) PhysicalPageNumber {
-            return .{ .ppn = @intCast(@intFromPtr(ptr) >> 12) };
-        }
+    pub fn map(self: Ptr, virtual: ConstPagePtr, physical: ConstPageFramePtr, permissions: Entry.Permissions) void {
+        const pte: *Entry = self.walk(virtual);
+        pte.physical_page_number = PhysicalPageNumber.fromPageFrame(physical);
+        pte.permissions = permissions;
+    }
 
-        pub fn toPageTablePtr(self: PhysicalPageNumber) PageTablePtr {
-            return @ptrFromInt(@as(usize, self.ppn << 12));
+    pub fn walk(self: Ptr, virtual: ConstPagePtr) *Entry {
+        var page_table: Ptr = self;
+        var level: Level = 2;
+        while (level > 0) : (level -= 1) {
+            const pte_index = PageTable.index(virtual, level);
+            const pte: *Entry = &page_table.entries[pte_index];
+            if (pte.permissions.valid) {
+                page_table = pte.physical_page_number.toPageTable();
+            } else {
+                page_table = @ptrCast(page_allocator.allocate(0) catch @panic("OOM"));
+                @memset(mem.asBytes(page_table), 0);
+                pte.physical_page_number = PhysicalPageNumber.fromPageTable(page_table);
+                pte.permissions = .{ .valid = true };
+            }
         }
-    };
+        const leaf_index = PageTable.index(virtual, 0);
+        return &page_table.entries[leaf_index];
+    }
+
+    pub fn index(virtual: ConstPagePtr, level: Level) Index {
+        return @intCast((@intFromPtr(virtual) >> (12 + @as(u6, 9) * level)) & 0b111111111);
+    }
+
+    comptime {
+        assert(@sizeOf(PageTable) == @sizeOf(Page));
+    }
 };
-pub const PageTableEntryPtr = *align(@sizeOf(PageTableEntry)) PageTableEntry;
-pub const PageTable = [PAGE_SIZE / @sizeOf(PageTableEntry)]PageTableEntry;
-pub const PageTablePtr = *align(PAGE_SIZE) PageTable;
+
+pub const PhysicalPageNumber = packed struct(u44) {
+    ppn: u44,
+
+    pub fn fromPageTable(pt: PageTable.Ptr) PhysicalPageNumber {
+        return .{ .ppn = @intCast(physicalFromLogical(@intFromPtr(pt)) >> 12) };
+    }
+
+    pub fn fromPageFrame(physical: ConstPageFramePtr) PhysicalPageNumber {
+        return .{ .ppn = @intCast(@intFromPtr(physical) >> 12) };
+    }
+
+    pub fn toPageTable(self: PhysicalPageNumber) PageTable.Ptr {
+        return @ptrFromInt(logicalFromPhysical(@as(PhysicalAddress, self.ppn) << 12));
+    }
+};
 
 pub const max_user_virtual: UserVirtualAddress = 0x3FFFFFFFFF;
-pub const logical_mapping_virtual_start: LogicalAddress = 0xFFFFFFC000000000;
-pub const kernel_virtual_start: KernelVirtualAddress = 0xFFFFFFFFFF000000;
-pub var logical_mapping_offset: usize = undefined;
-pub var kernel_offset: usize = undefined;
-pub var address_translation_on: bool = false;
+pub const logical_start: LogicalAddress = 0xFFFFFFC000000000;
+pub var logical_size: usize = undefined; // In pages.
+pub var logical_offset: usize = 0;
+pub const kernel_start: KernelVirtualAddress = 0xFFFFFFFFFF000000;
+pub var kernel_size: usize = undefined; // In pages.
+pub var kernel_offset: usize = 0;
 
-const PAGE_SIZE = std.mem.page_size;
 const KERNEL_STACK_SIZE_TOTAL = proc.MAX_HARTS * entry.KERNEL_STACK_SIZE_PER_HART;
 export var kernel_stack: [KERNEL_STACK_SIZE_TOTAL]u8 linksection(".bss") = undefined;
 
-pub fn init(heap: PageFrameSlice, holes: []const ConstPageFrameSlice) void {
+pub fn init(heap: PageFrameSlice, initrd: *PageFrameSlice, fdt: *PageFrameSlice) void {
     log.info("Initializing memory subsystem.", .{});
-    page_allocator.init(heap, holes);
+    page_allocator.init(heap, initrd, fdt);
     Region.init();
 }
 
-pub fn mapRange(page_table: PageTablePtr, virtual: ConstPageSlice, physical: ConstPageFrameSlice, permissions: PageTableEntry.Permissions) void {
-    for (virtual, physical) |*v, *p| {
-        mapPage(page_table, @alignCast(v), @alignCast(p), permissions);
-    }
+pub fn kernelVirtualFromPhysical(physical: anytype) @TypeOf(physical) {
+    return switch (@typeInfo(@TypeOf(physical))) {
+        .Int => physical +% kernel_offset,
+        .Pointer => @ptrFromInt(@intFromPtr(physical) +% kernel_offset),
+        else => @compileError("Argument must be an integer or a pointer."),
+    };
 }
 
-pub fn mapPage(page_table: PageTablePtr, virtual: ConstPagePtr, physical: ConstPageFramePtr, permissions: PageTableEntry.Permissions) void {
-    // log.debug("{*} -> {*} {}.", .{ virtual.ptr, physical.ptr, permissions });
-    var pt = page_table;
-    const v = @intFromPtr(virtual);
-    var level: usize = 2;
-    while (level > 0) : (level -= 1) {
-        const index = (v >> @intCast(12 + 9 * level)) & 0b111111111;
-        const pte: PageTableEntryPtr = &pt[index];
-        if (pte.permissions.valid) {
-            pt = pte.physical_page_number.toPageTablePtr();
-        } else {
-            pt = @ptrCast(page_allocator.allocate(0) catch @panic("OOM"));
-            @memset(mem.asBytes(pt), 0);
-            pte.physical_page_number = PageTableEntry.PhysicalPageNumber.fromPageTablePtr(pt);
-            pte.permissions = .{ .valid = true };
-        }
-    }
-    const leaf_index = (v >> 12) & 0b111111111;
-    const leaf_pte: PageTableEntryPtr = &pt[leaf_index];
-    leaf_pte.physical_page_number = PageTableEntry.PhysicalPageNumber.fromConstPagePtr(physical);
-    leaf_pte.permissions = permissions;
+pub fn physicalFromKernelVirtual(kernel_virtual: anytype) @TypeOf(kernel_virtual) {
+    return switch (@typeInfo(@TypeOf(kernel_virtual))) {
+        .Int => kernel_virtual -% kernel_offset,
+        .Pointer => @ptrFromInt(@intFromPtr(kernel_virtual) -% kernel_offset),
+        else => @compileError("Argument must be an integer or a pointer."),
+    };
 }
 
-pub fn pageSlicesOverlap(a: ConstPageSlice, b: ConstPageSlice) bool {
+pub fn logicalFromPhysical(physical: anytype) @TypeOf(physical) {
+    return switch (@typeInfo(@TypeOf(physical))) {
+        .Int => physical +% logical_offset,
+        .Pointer => @ptrFromInt(@intFromPtr(physical) +% logical_offset),
+        else => @compileError("Argument must be an integer or a pointer."),
+    };
+}
+
+pub fn physicalFromLogical(logical: anytype) @TypeOf(logical) {
+    return switch (@typeInfo(@TypeOf(logical))) {
+        .Int => logical -% logical_offset,
+        .Pointer => @ptrFromInt(@intFromPtr(logical) -% logical_offset),
+        else => @compileError("Argument must be an integer or a pointer."),
+    };
+}
+
+pub fn pageSlicesOverlap(a: PageSlice, b: PageSlice) bool {
     const a_start = @intFromPtr(a.ptr);
-    const a_end = a_start + a.len * @sizeOf(Page);
+    const a_end = a_start + a.len;
     const b_start = @intFromPtr(b.ptr);
-    const b_end = b_start + b.len * @sizeOf(Page);
+    const b_end = b_start + b.len;
     return a_start < b_end and a_end > b_start;
-}
-
-pub fn kernelVirtualFromPhysical(physical: PhysicalAddress) KernelVirtualAddress {
-    return physical +% kernel_offset;
-}
-
-pub fn physicalFromKernelVirtual(kernel_virtual: KernelVirtualAddress) PhysicalAddress {
-    return kernel_virtual -% kernel_offset;
-}
-
-pub fn logicalFromPhysical(physical: PhysicalAddress) LogicalAddress {
-    return physical +% logical_mapping_offset;
-}
-
-pub fn physicalFromLogical(logical: LogicalAddress) PhysicalAddress {
-    return logical -% logical_mapping_offset;
 }
