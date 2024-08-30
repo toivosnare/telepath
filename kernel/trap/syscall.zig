@@ -33,6 +33,9 @@ pub fn fork(process: *Process) !Result {
     try process.children.append(child_process);
     child_process.parent = process;
 
+    // TODO: copy region entries properly.
+    child_process.region_entries_head = process.region_entries_head;
+
     @memcpy(
         mem.asBytes(&child_process.context.register_file),
         mem.asBytes(&process.context.register_file),

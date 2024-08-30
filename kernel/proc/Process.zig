@@ -5,8 +5,12 @@ const mem = std.mem;
 const mm = @import("../mm.zig");
 const proc = @import("../proc.zig");
 const Region = mm.Region;
+const PhysicalAddress = mm.PhysicalAddress;
 const UserVirtualAddress = mm.UserVirtualAddress;
+const LogicalAddress = mm.LogicalAddress;
 const Page = mm.Page;
+const ConstPagePtr = mm.ConstPagePtr;
+const ConstPageFramePtr = mm.ConstPageFramePtr;
 const PageTable = mm.PageTable;
 const HartIndex = proc.HartIndex;
 const Process = @This();
@@ -45,6 +49,22 @@ pub const RegionEntry = struct {
         writable: bool = false,
         executable: bool = false,
     };
+
+    /// Check whether the region entry contains the given user virtual address
+    /// and if so return corresponding logical address or null otherwise.
+    pub fn contains(self: RegionEntry, address: UserVirtualAddress) ?LogicalAddress {
+        if (self.start_address == null)
+            return null;
+        if (self.start_address.? > address)
+            return null;
+        assert(self.region != null);
+        const end_address = self.start_address.? + self.region.?.sizeInBytes();
+        if (end_address <= address)
+            return null;
+
+        const offset_from_region_start = address - self.start_address.?;
+        return @intFromPtr(self.region.?.allocation.ptr) + offset_from_region_start;
+    }
 };
 pub const Context = extern struct {
     register_file: RegisterFile,
@@ -270,4 +290,31 @@ pub fn deinit(self: *Process) void {
     @memset(mem.asBytes(&self.context), 0);
     if (self.state == .ready)
         proc.dequeue(self);
+}
+
+pub fn handlePageFault(self: *Process, faulting_address: UserVirtualAddress) *Process {
+    if (faulting_address >= mm.max_user_virtual)
+        @panic("non user virtual address faulting");
+
+    var entry: ?*RegionEntry = self.region_entries_head;
+    while (entry) |e| : (entry = e.next) {
+        assert(e.start_address != null);
+        if (e.contains(faulting_address)) |logical| {
+            const virtual: ConstPagePtr = @ptrFromInt(mem.alignBackward(UserVirtualAddress, faulting_address, @sizeOf(Page)));
+            const physical: ConstPageFramePtr = @ptrFromInt(mem.alignBackward(PhysicalAddress, mm.physicalFromLogical(logical), @sizeOf(Page)));
+            self.page_table.map(virtual, physical, .{
+                .valid = true,
+                .readable = e.permissions.readable,
+                .writable = e.permissions.writable,
+                .executable = e.permissions.executable,
+                .user = true,
+                .global = false,
+            });
+            break;
+        }
+    } else {
+        @panic("not mapped");
+    }
+
+    return self;
 }
