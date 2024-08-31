@@ -108,3 +108,17 @@ pub fn spawn(process: *Process) !Result {
     proc.enqueue(child_process);
     return child_process.id;
 }
+
+pub fn kill(process: *Process) !Result {
+    const child_process_id = process.context.register_file.a1;
+    log.debug("Process with ID {d} is killing child with ID {d}.", .{ process.id, child_process_id });
+
+    const child_process = for (process.children.constSlice()) |child| {
+        if (child.id == child_process_id)
+            break child;
+    } else {
+        return error.NoPermission;
+    };
+    child_process.deinit();
+    return 0;
+}
