@@ -14,3 +14,11 @@ pub const SyscallId = enum(usize) {
     wait = 10,
     wake = 11,
 };
+
+pub const RegionDescription = packed struct {
+    region_index: u16,
+    start_address: usize,
+    readable: bool,
+    writable: bool,
+    executable: bool,
+};
