@@ -255,12 +255,8 @@ fn freeRegionEntry(self: *Process, region_entry: *RegionEntry) void {
 }
 
 pub fn unmapRegion(self: *Process, region: *Region) void {
-    for (&self.region_entries) |*re| {
-        if (re.region != region)
-            continue;
-        if (re.start_address != null)
-            self.unmapRegionEntry(re);
-        return;
+    if (self.hasRegion(region)) |region_entry| {
+        self.unmapRegionEntry(region_entry);
     }
 }
 

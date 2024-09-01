@@ -179,3 +179,12 @@ pub fn refcount(process: *Process) !Result {
     _ = process.hasRegion(region) orelse return error.NoPermission;
     return region.ref_count;
 }
+
+pub fn unmap(process: *Process) !Result {
+    const region_index = process.context.register_file.a1;
+    log.debug("Process with ID {d} is unmapping region {d}.", .{ process.id, region_index });
+
+    const region = try Region.fromIndex(region_index);
+    process.unmapRegion(region);
+    return 0;
+}
