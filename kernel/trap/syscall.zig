@@ -118,7 +118,7 @@ pub fn allocate(process: *Process) !Result {
     const permissions_int = process.context.register_file.a2;
     if (permissions_int == 0)
         return error.InvalidParameter;
-    const permissions: *libt.AllocatePermissions = @ptrFromInt(permissions_int);
+    const permissions: *libt.Permissions = @ptrFromInt(permissions_int);
     const physical_address = process.context.register_file.a3;
     log.debug("Process with ID {d} is allocating region of size {d} with permissions {}.", .{ process.id, size, permissions });
 
@@ -142,4 +142,31 @@ pub fn map(process: *Process) !Result {
     const region = try Region.fromIndex(region_index);
     const actual_address = try process.mapRegion(region, requested_address);
     return actual_address;
+}
+
+pub fn share(process: *Process) !Result {
+    const region_index = process.context.register_file.a1;
+    const recipient_id = process.context.register_file.a2;
+    const permissions_int = process.context.register_file.a3;
+    if (permissions_int == 0)
+        return error.InvalidParameter;
+    const permissions: *libt.Permissions = @ptrFromInt(permissions_int);
+    log.debug("Process with ID {d} is sharing region {d} with process with ID {d} with permissions: {}.", .{ process.id, region_index, recipient_id, permissions });
+
+    const region = try Region.fromIndex(region_index);
+    const region_entry = process.hasRegion(region) orelse return error.NoPermission;
+    if (permissions.readable and !region_entry.permissions.readable)
+        return error.NoPermission;
+    if (permissions.writable and !region_entry.permissions.writable)
+        return error.NoPermission;
+    if (permissions.executable and !region_entry.permissions.executable)
+        return error.NoPermission;
+
+    const recipient = proc.processFromId(recipient_id) orelse return error.InvalidParameter;
+    _ = try recipient.receiveRegion(region, .{
+        .readable = permissions.readable,
+        .writable = permissions.writable,
+        .executable = permissions.executable,
+    });
+    return 0;
 }

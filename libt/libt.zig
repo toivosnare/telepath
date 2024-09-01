@@ -23,7 +23,7 @@ pub const RegionDescription = packed struct {
     executable: bool,
 };
 
-pub const AllocatePermissions = packed struct(u3) {
+pub const Permissions = packed struct(u3) {
     readable: bool,
     writable: bool,
     executable: bool,

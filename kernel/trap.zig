@@ -93,6 +93,7 @@ fn handleSyscall(current_process: *Process) *Process {
         .kill => syscall.kill(current_process),
         .allocate => syscall.allocate(current_process),
         .map => syscall.map(current_process),
+        .share => syscall.share(current_process),
         else => @panic("unhandled syscall"),
     } catch |e| switch (e) {
         else => math.maxInt(usize),

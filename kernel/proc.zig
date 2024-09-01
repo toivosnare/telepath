@@ -123,3 +123,11 @@ pub fn contextSwitch(process: *Process) void {
     });
     asm volatile ("sfence.vma");
 }
+
+pub fn processFromId(id: Process.Id) ?*Process {
+    for (&table) |*process| {
+        if (process.state != .invalid and process.id == id)
+            return process;
+    }
+    return null;
+}
