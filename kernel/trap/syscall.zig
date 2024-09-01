@@ -170,3 +170,12 @@ pub fn share(process: *Process) !Result {
     });
     return 0;
 }
+
+pub fn refcount(process: *Process) !Result {
+    const region_index = process.context.register_file.a1;
+    log.debug("Process with ID {d} is getting the reference count of the region {d}.", .{ process.id, region_index });
+
+    const region = try Region.fromIndex(region_index);
+    _ = process.hasRegion(region) orelse return error.NoPermission;
+    return region.ref_count;
+}
