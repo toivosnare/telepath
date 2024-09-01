@@ -51,3 +51,14 @@ pub fn isFree(self: Region) bool {
 pub fn sizeInBytes(self: Region) usize {
     return self.size * @sizeOf(Page);
 }
+
+pub fn index(self: *const Region) Index {
+    // TODO: use pointer subtraction introduced in Zig 0.14.
+    return (@intFromPtr(self) - @intFromPtr(&table[0])) / @sizeOf(Region);
+}
+
+pub fn fromIndex(idx: Index) !*Region {
+    if (idx >= MAX_REGIONS)
+        return error.InvalidParameter;
+    return &table[idx];
+}

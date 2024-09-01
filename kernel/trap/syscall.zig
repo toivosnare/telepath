@@ -122,3 +122,24 @@ pub fn kill(process: *Process) !Result {
     child_process.deinit();
     return 0;
 }
+
+pub fn allocate(process: *Process) !Result {
+    const size = process.context.register_file.a1;
+    const permissions_int = process.context.register_file.a2;
+    if (permissions_int == 0)
+        return error.InvalidParameter;
+    const permissions: *libt.AllocatePermissions = @ptrFromInt(permissions_int);
+    const physical_address = process.context.register_file.a3;
+    log.debug("Process with ID {d} is allocating region of size {d} with permissions {}.", .{ process.id, size, permissions });
+
+    if (physical_address != 0)
+        @panic("not implemented");
+
+    const region_entry = try process.allocateRegion(size, .{
+        .readable = permissions.readable,
+        .writable = permissions.writable,
+        .executable = permissions.executable,
+    });
+    assert(region_entry.region != null);
+    return region_entry.region.?.index();
+}
