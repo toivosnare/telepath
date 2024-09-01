@@ -127,23 +127,19 @@ pub fn allocateRegion(self: *Process, size: usize, permissions: RegionEntry.Perm
     return error.RegionEntryTableFull;
 }
 
-pub fn mapRegion(self: *Process, region: *Region, address: ?UserVirtualAddress) !UserVirtualAddress {
-    for (&self.region_entries) |*re| {
-        if (re.region != region)
-            continue;
-        if (re.start_address != null)
-            return error.AlreadyMapped;
-        return self.mapRegionEntry(re, address);
-    }
-    return error.NoPermission;
+pub fn mapRegion(self: *Process, region: *Region, address: UserVirtualAddress) !UserVirtualAddress {
+    const region_entry = self.hasRegion(region) orelse return error.NoPermission;
+    if (region_entry.start_address != null)
+        return error.AlreadyMapped;
+    return self.mapRegionEntry(region_entry, address);
 }
 
-pub fn mapRegionEntry(self: *Process, region_entry: *RegionEntry, address: ?UserVirtualAddress) !UserVirtualAddress {
-    if (address) |addr| {
-        try self.mapRegionEntryAtAddress(region_entry, addr);
-        return addr;
-    } else {
+pub fn mapRegionEntry(self: *Process, region_entry: *RegionEntry, address: UserVirtualAddress) !UserVirtualAddress {
+    if (address == 0) {
         return self.mapRegionEntryWherever(region_entry);
+    } else {
+        try self.mapRegionEntryAtAddress(region_entry, address);
+        return address;
     }
 }
 
@@ -317,4 +313,12 @@ pub fn handlePageFault(self: *Process, faulting_address: UserVirtualAddress) *Pr
     }
 
     return self;
+}
+
+pub fn hasRegion(self: *Process, region: *const Region) ?*RegionEntry {
+    for (&self.region_entries) |*region_entry| {
+        if (region_entry.region == region)
+            return region_entry;
+    }
+    return null;
 }

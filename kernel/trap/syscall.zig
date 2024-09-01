@@ -64,21 +64,11 @@ pub fn spawn(process: *Process) !Result {
     const entry_point = process.context.register_file.a3;
 
     for (region_descriptions) |region_description| {
-        if (region_description.region_index >= Region.MAX_REGIONS)
-            return error.InvalidParameter;
-        const region = &Region.table[region_description.region_index];
+        const region = try Region.fromIndex(region_description.region_index);
         if (region.isFree())
             return error.InvalidParameter;
 
-        const region_entry = for (process.region_entries) |region_entry| {
-            if (region_entry.region == null)
-                continue;
-            if (region_entry.region.? == region)
-                break region_entry;
-        } else {
-            return error.NoPermission;
-        };
-
+        const region_entry = process.hasRegion(region) orelse return error.NoPermission;
         if (region_description.readable and !region_entry.permissions.readable)
             return error.NoPermission;
         if (region_description.writable and !region_entry.permissions.writable)
@@ -94,7 +84,7 @@ pub fn spawn(process: *Process) !Result {
     child_process.parent = process;
 
     for (region_descriptions) |region_description| {
-        const region = &Region.table[region_description.region_index];
+        const region = Region.fromIndex(region_description.region_index) catch unreachable;
         const region_entry = try child_process.receiveRegion(region, .{
             .readable = region_description.readable,
             .writable = region_description.writable,
@@ -142,4 +132,14 @@ pub fn allocate(process: *Process) !Result {
     });
     assert(region_entry.region != null);
     return region_entry.region.?.index();
+}
+
+pub fn map(process: *Process) !Result {
+    const region_index = process.context.register_file.a1;
+    const requested_address = process.context.register_file.a2;
+    log.debug("Process with ID {d} is mapping region {d} at 0x{x}.", .{ process.id, region_index, requested_address });
+
+    const region = try Region.fromIndex(region_index);
+    const actual_address = try process.mapRegion(region, requested_address);
+    return actual_address;
 }
