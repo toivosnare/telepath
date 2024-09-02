@@ -51,8 +51,8 @@ pub const RegionEntry = struct {
     };
 
     /// Check whether the region entry contains the given user virtual address
-    /// and if so return corresponding logical address or null otherwise.
-    pub fn contains(self: RegionEntry, address: UserVirtualAddress) ?LogicalAddress {
+    /// and if so return corresponding physical address or null otherwise.
+    pub fn contains(self: RegionEntry, address: UserVirtualAddress) ?PhysicalAddress {
         if (self.start_address == null)
             return null;
         if (self.start_address.? > address)
@@ -110,10 +110,16 @@ pub const Context = extern struct {
     }
 };
 
-pub fn allocateRegion(self: *Process, size: usize, permissions: RegionEntry.Permissions) !*RegionEntry {
+pub fn allocateRegion(
+    self: *Process,
+    size: usize,
+    permissions: RegionEntry.Permissions,
+    physical_address: PhysicalAddress,
+) !*RegionEntry {
     for (&self.region_entries) |*re| {
         if (re.region == null) {
-            const region = try Region.allocate(size);
+            // TODO: add physical address permissions.
+            const region = try Region.allocate(size, physical_address);
             re.* = .{
                 .region = region,
                 .start_address = null,
@@ -291,9 +297,9 @@ pub fn handlePageFault(self: *Process, faulting_address: UserVirtualAddress) *Pr
     var entry: ?*RegionEntry = self.region_entries_head;
     while (entry) |e| : (entry = e.next) {
         assert(e.start_address != null);
-        if (e.contains(faulting_address)) |logical| {
+        if (e.contains(faulting_address)) |corresponding_address| {
             const virtual: ConstPagePtr = @ptrFromInt(mem.alignBackward(UserVirtualAddress, faulting_address, @sizeOf(Page)));
-            const physical: ConstPageFramePtr = @ptrFromInt(mem.alignBackward(PhysicalAddress, mm.physicalFromLogical(logical), @sizeOf(Page)));
+            const physical: ConstPageFramePtr = @ptrFromInt(mem.alignBackward(PhysicalAddress, corresponding_address, @sizeOf(Page)));
             self.page_table.map(virtual, physical, .{
                 .valid = true,
                 .readable = e.permissions.readable,

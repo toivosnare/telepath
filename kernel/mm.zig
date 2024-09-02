@@ -106,6 +106,7 @@ pub const PhysicalPageNumber = packed struct(u44) {
     }
 };
 
+pub var ram_physical_slice: PageFrameSlice = undefined;
 pub const max_user_virtual: UserVirtualAddress = 0x3FFFFFFFFF;
 pub const logical_start: LogicalAddress = 0xFFFFFFC000000000;
 pub var logical_size: usize = undefined; // In pages.

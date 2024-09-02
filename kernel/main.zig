@@ -44,6 +44,9 @@ export fn bootHartMain(boot_hart_id: usize, fdt_physical_start: PhysicalAddress,
     for (proc.hart_ids[1..], 2..) |secondary_hart_id, i|
         sbi.hsm.hartStart(secondary_hart_id, @intFromPtr(&secondaryHartEntry), i) catch @panic("hartStart");
 
+    mm.ram_physical_slice.ptr = @ptrFromInt(mem.alignBackward(PhysicalAddress, pr.ram_physical_start, @sizeOf(Page)));
+    mm.ram_physical_slice.len = math.divCeil(usize, pr.ram_size, @sizeOf(Page)) catch unreachable;
+
     const kernel_size = @intFromPtr(&kernel_linker_end) - @intFromPtr(&kernel_linker_start);
     const kernel_physical_end = kernel_physical_start + kernel_size;
     mm.kernel_size = math.divCeil(usize, kernel_size, @sizeOf(Page)) catch unreachable;
@@ -103,7 +106,7 @@ export fn bootHartMain(boot_hart_id: usize, fdt_physical_start: PhysicalAddress,
             .readable = rh.readable,
             .writable = rh.writable,
             .executable = rh.executable,
-        }) catch @panic("allocateRegion");
+        }, 0) catch @panic("allocateRegion");
         const aligned_load_address = mem.alignBackward(UserVirtualAddress, rh.load_address, @sizeOf(Page));
         _ = init_process.mapRegionEntry(region_entry, aligned_load_address) catch @panic("mapRegionEntry");
 

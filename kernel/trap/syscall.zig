@@ -120,16 +120,13 @@ pub fn allocate(process: *Process) !Result {
         return error.InvalidParameter;
     const permissions: *libt.Permissions = @ptrFromInt(permissions_int);
     const physical_address = process.context.register_file.a3;
-    log.debug("Process with ID {d} is allocating region of size {d} with permissions {}.", .{ process.id, size, permissions });
-
-    if (physical_address != 0)
-        @panic("not implemented");
+    log.debug("Process with ID {d} is allocating region of size {d} with permissions {} at physical address 0x{x}.", .{ process.id, size, permissions, physical_address });
 
     const region_entry = try process.allocateRegion(size, .{
         .readable = permissions.readable,
         .writable = permissions.writable,
         .executable = permissions.executable,
-    });
+    }, physical_address);
     assert(region_entry.region != null);
     return region_entry.region.?.index();
 }

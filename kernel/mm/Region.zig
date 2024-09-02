@@ -1,14 +1,17 @@
 const std = @import("std");
 const math = std.math;
 const mm = @import("../mm.zig");
+const PhysicalAddress = mm.PhysicalAddress;
 const Page = mm.Page;
+const PageFrameSlice = mm.PageFrameSlice;
 const PageSlice = mm.PageSlice;
 const Region = @This();
 
 // Ref count of zero implies that the region is not in use.
 ref_count: usize,
-allocation: PageSlice,
+allocation: PageFrameSlice,
 size: usize,
+mmio: bool,
 
 pub const Index = usize;
 pub const MAX_REGIONS = 128;
@@ -28,10 +31,24 @@ pub fn findFree() !*Region {
     return error.RegionTableFull;
 }
 
-pub fn allocate(size: usize) !*Region {
+pub fn allocate(size: usize, physical_address: PhysicalAddress) !*Region {
     const region = try findFree();
-    const order = math.log2_int_ceil(usize, size);
-    region.allocation = try mm.page_allocator.allocate(order);
+
+    // TODO: it is not possible to allocate physical address 0?
+    if (physical_address == 0) {
+        const order = math.log2_int_ceil(usize, size);
+        region.allocation = try mm.page_allocator.allocate(order);
+        region.allocation.ptr = mm.physicalFromLogical(region.allocation.ptr);
+        region.mmio = false;
+    } else {
+        if (!std.mem.isAligned(physical_address, @sizeOf(Page)))
+            return error.InvalidParameter;
+        region.allocation.ptr = @ptrFromInt(physical_address);
+        region.allocation.len = size;
+        if (mm.pageSlicesOverlap(region.allocation, mm.ram_physical_slice))
+            return error.InvalidParameter;
+        region.mmio = true;
+    }
     region.ref_count = 1;
     region.size = size;
     return region;
@@ -39,8 +56,11 @@ pub fn allocate(size: usize) !*Region {
 
 pub fn free(self: *Region) void {
     self.ref_count -= 1;
-    if (self.ref_count == 0) {
-        mm.page_allocator.free(self.allocation);
+    if (self.ref_count == 0 and !self.mmio) {
+        var logical: PageSlice = undefined;
+        logical.ptr = mm.logicalFromPhysical(self.allocation.ptr);
+        logical.len = self.allocation.len;
+        mm.page_allocator.free(logical);
     }
 }
 

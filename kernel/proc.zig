@@ -45,10 +45,8 @@ pub fn onAddressTranslationEnabled() *Process {
     init_process.region_entries_head = mm.kernelVirtualFromPhysical(init_process.region_entries_head.?);
     var region_entry: ?*Process.RegionEntry = init_process.region_entries_head;
     while (region_entry) |re| : (region_entry = re.next) {
-        if (re.region != null) {
+        if (re.region != null)
             re.region = mm.kernelVirtualFromPhysical(re.region.?);
-            re.region.?.allocation.ptr = mm.logicalFromPhysical(re.region.?.allocation.ptr);
-        }
         if (re.prev != null)
             re.prev = mm.kernelVirtualFromPhysical(re.prev.?);
         if (re.next != null)
