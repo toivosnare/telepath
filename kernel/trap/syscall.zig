@@ -59,8 +59,8 @@ pub fn spawn(process: *Process) !Result {
     if (region_descriptions_int == 0)
         return error.InvalidParameter;
 
-    const region_descriptions_ptr: [*]libt.RegionDescription = @ptrFromInt(region_descriptions_int);
-    const region_descriptions: []libt.RegionDescription = region_descriptions_ptr[0..region_amount];
+    const region_descriptions_ptr: [*]libt.syscall.RegionDescription = @ptrFromInt(region_descriptions_int);
+    const region_descriptions: []libt.syscall.RegionDescription = region_descriptions_ptr[0..region_amount];
     const entry_point = process.context.register_file.a3;
 
     for (region_descriptions) |region_description| {
@@ -115,10 +115,7 @@ pub fn kill(process: *Process) !Result {
 
 pub fn allocate(process: *Process) !Result {
     const size = process.context.register_file.a1;
-    const permissions_int = process.context.register_file.a2;
-    if (permissions_int == 0)
-        return error.InvalidParameter;
-    const permissions: *libt.Permissions = @ptrFromInt(permissions_int);
+    const permissions: libt.syscall.Permissions = @bitCast(process.context.register_file.a2);
     const physical_address = process.context.register_file.a3;
     log.debug("Process with ID {d} is allocating region of size {d} with permissions {} at physical address 0x{x}.", .{ process.id, size, permissions, physical_address });
 
@@ -144,10 +141,7 @@ pub fn map(process: *Process) !Result {
 pub fn share(process: *Process) !Result {
     const region_index = process.context.register_file.a1;
     const recipient_id = process.context.register_file.a2;
-    const permissions_int = process.context.register_file.a3;
-    if (permissions_int == 0)
-        return error.InvalidParameter;
-    const permissions: *libt.Permissions = @ptrFromInt(permissions_int);
+    const permissions: libt.syscall.Permissions = @bitCast(process.context.register_file.a3);
     log.debug("Process with ID {d} is sharing region {d} with process with ID {d} with permissions: {}.", .{ process.id, region_index, recipient_id, permissions });
 
     const region = try Region.fromIndex(region_index);

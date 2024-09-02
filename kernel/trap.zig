@@ -77,7 +77,7 @@ fn handleException(code: csr.scause.ExceptionCode, current_process: *Process) *P
 fn handleSyscall(current_process: *Process) *Process {
     current_process.context.register_file.pc += 4;
     const syscall_id_int = current_process.context.register_file.a0;
-    const syscall_id = meta.intToEnum(libt.SyscallId, syscall_id_int) catch {
+    const syscall_id = meta.intToEnum(libt.syscall.Id, syscall_id_int) catch {
         log.warn("Invalid syscall ID {d}", .{syscall_id_int});
         current_process.context.register_file.a0 = math.maxInt(usize);
         return current_process;
