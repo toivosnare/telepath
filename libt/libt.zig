@@ -26,7 +26,7 @@ fn _start() callconv(.Naked) noreturn {
         \\ecall
         \\bltz a0, 1f
         \\mv sp, %[stack_address]
-        \\jr %[main]
+        \\jr %[call_main]
         \\1:
         \\li a0, %[exit_id]
         \\li a1, 1
@@ -38,7 +38,39 @@ fn _start() callconv(.Naked) noreturn {
           [map_id] "I" (@intFromEnum(syscall.Id.map)),
           [virtual_address] "{t0}" (max_virtual - options.stack_size * std.mem.page_size),
           [stack_address] "{t1}" (max_virtual),
-          [main] "{t2}" (&root.main),
+          [call_main] "{t2}" (&callMain),
           [exit_id] "I" (@intFromEnum(syscall.Id.exit)),
     );
+}
+
+fn callMain() noreturn {
+    const bad_main_ret = "expected return type of main to be 'void', '!void', 'noreturn', 'usize', or '!usize'";
+    const ReturnType = @typeInfo(@TypeOf(root.main)).Fn.return_type.?;
+    const exit_code: usize = switch (@typeInfo(ReturnType)) {
+        .NoReturn => root.main(),
+        .Void => blk: {
+            root.main();
+            break :blk 0;
+        },
+        .Int => blk: {
+            if (ReturnType != usize)
+                @compileError(bad_main_ret);
+            break :blk root.main();
+        },
+        .ErrorUnion => blk: {
+            const result = root.main() catch break :blk 1;
+            const NormalType = @TypeOf(result);
+            switch (@typeInfo(NormalType)) {
+                .Void => break :blk 0,
+                .Int => {
+                    if (NormalType != usize)
+                        @compileError(bad_main_ret);
+                    break :blk result;
+                },
+                else => @compileError(bad_main_ret),
+            }
+        },
+        else => @compileError(bad_main_ret),
+    };
+    syscall.exit(exit_code);
 }
