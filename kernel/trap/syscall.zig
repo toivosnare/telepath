@@ -8,8 +8,6 @@ const mm = @import("../mm.zig");
 const Region = mm.Region;
 const Process = proc.Process;
 
-pub const Result = usize;
-
 pub fn exit(process: *Process) *Process {
     const exit_code = process.context.register_file.a1;
     log.debug("Process with PID {d} is exiting with exit code {d}.", .{ process.id, exit_code });
@@ -23,17 +21,19 @@ pub fn exit(process: *Process) *Process {
     return next_process;
 }
 
-pub fn identify(process: *Process) Result {
+pub const IdentifyError = libt.syscall.IdentifyError;
+pub fn identify(process: *Process) IdentifyError!usize {
     return process.id;
 }
 
-pub fn fork(process: *Process) !Result {
+pub const ForkError = libt.syscall.ForkError;
+pub fn fork(process: *Process) ForkError!usize {
     log.debug("Process with ID {d} is forking.", .{process.id});
 
     const child_process = try proc.allocate();
     errdefer child_process.deinit();
 
-    try process.children.append(child_process);
+    process.children.append(child_process) catch return error.OutOfMemory;
     child_process.parent = process;
 
     // TODO: copy region entries properly.
@@ -48,7 +48,8 @@ pub fn fork(process: *Process) !Result {
     return child_process.id;
 }
 
-pub fn spawn(process: *Process) !Result {
+pub const SpawnError = libt.syscall.SpawnError;
+pub fn spawn(process: *Process) SpawnError!usize {
     log.debug("Process with ID {d} is spawning.", .{process.id});
 
     const region_amount = process.context.register_file.a1;
@@ -80,7 +81,7 @@ pub fn spawn(process: *Process) !Result {
     const child_process = try proc.allocate();
     errdefer child_process.deinit();
 
-    try process.children.append(child_process);
+    process.children.append(child_process) catch return error.OutOfMemory;
     child_process.parent = process;
 
     for (region_descriptions) |region_description| {
@@ -99,7 +100,8 @@ pub fn spawn(process: *Process) !Result {
     return child_process.id;
 }
 
-pub fn kill(process: *Process) !Result {
+pub const KillError = libt.syscall.KillError;
+pub fn kill(process: *Process) KillError!usize {
     const child_process_id = process.context.register_file.a1;
     log.debug("Process with ID {d} is killing child with ID {d}.", .{ process.id, child_process_id });
 
@@ -113,7 +115,8 @@ pub fn kill(process: *Process) !Result {
     return 0;
 }
 
-pub fn allocate(process: *Process) !Result {
+pub const AllocateError = libt.syscall.AllocateError;
+pub fn allocate(process: *Process) AllocateError!usize {
     const size = process.context.register_file.a1;
     const permissions: libt.syscall.Permissions = @bitCast(process.context.register_file.a2);
     const physical_address = process.context.register_file.a3;
@@ -128,7 +131,8 @@ pub fn allocate(process: *Process) !Result {
     return region_entry.region.?.index();
 }
 
-pub fn map(process: *Process) !Result {
+pub const MapError = libt.syscall.MapError;
+pub fn map(process: *Process) MapError!usize {
     const region_index = process.context.register_file.a1;
     const requested_address = process.context.register_file.a2;
     log.debug("Process with ID {d} is mapping region {d} at 0x{x}.", .{ process.id, region_index, requested_address });
@@ -138,7 +142,8 @@ pub fn map(process: *Process) !Result {
     return actual_address;
 }
 
-pub fn share(process: *Process) !Result {
+pub const ShareError = libt.syscall.ShareError;
+pub fn share(process: *Process) ShareError!usize {
     const region_index = process.context.register_file.a1;
     const recipient_id = process.context.register_file.a2;
     const permissions: libt.syscall.Permissions = @bitCast(process.context.register_file.a3);
@@ -162,7 +167,8 @@ pub fn share(process: *Process) !Result {
     return 0;
 }
 
-pub fn refcount(process: *Process) !Result {
+pub const RefcountError = libt.syscall.RefcountError;
+pub fn refcount(process: *Process) RefcountError!usize {
     const region_index = process.context.register_file.a1;
     log.debug("Process with ID {d} is getting the reference count of the region {d}.", .{ process.id, region_index });
 
@@ -171,7 +177,8 @@ pub fn refcount(process: *Process) !Result {
     return region.ref_count;
 }
 
-pub fn unmap(process: *Process) !Result {
+pub const UnmapError = libt.syscall.UnmapError;
+pub fn unmap(process: *Process) UnmapError!usize {
     const region_index = process.context.register_file.a1;
     log.debug("Process with ID {d} is unmapping region {d}.", .{ process.id, region_index });
 

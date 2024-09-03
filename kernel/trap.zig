@@ -79,13 +79,13 @@ fn handleSyscall(current_process: *Process) *Process {
     const syscall_id_int = current_process.context.register_file.a0;
     const syscall_id = meta.intToEnum(libt.syscall.Id, syscall_id_int) catch {
         log.warn("Invalid syscall ID {d}", .{syscall_id_int});
-        current_process.context.register_file.a0 = math.maxInt(usize);
+        current_process.context.register_file.a0 = libt.syscall.packResult(error.InvalidParameter);
         return current_process;
     };
     if (syscall_id == .exit) {
         return syscall.exit(current_process);
     }
-    const result: usize = switch (syscall_id) {
+    const result = switch (syscall_id) {
         .exit => unreachable,
         .identify => syscall.identify(current_process),
         .fork => syscall.fork(current_process),
@@ -97,9 +97,7 @@ fn handleSyscall(current_process: *Process) *Process {
         .refcount => syscall.refcount(current_process),
         .unmap => syscall.unmap(current_process),
         else => @panic("unhandled syscall"),
-    } catch |e| switch (e) {
-        else => math.maxInt(usize),
     };
-    current_process.context.register_file.a0 = result;
+    current_process.context.register_file.a0 = libt.syscall.packResult(result);
     return current_process;
 }

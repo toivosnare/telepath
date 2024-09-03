@@ -78,7 +78,7 @@ pub fn allocate() !*Process {
             return p;
         }
     }
-    return error.ProcessTableFull;
+    return error.OutOfMemory;
 }
 
 pub fn enqueue(process: *Process) void {

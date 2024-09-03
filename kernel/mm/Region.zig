@@ -28,7 +28,7 @@ pub fn findFree() !*Region {
         if (r.isFree())
             return r;
     }
-    return error.RegionTableFull;
+    return error.OutOfMemory;
 }
 
 pub fn allocate(size: usize, physical_address: PhysicalAddress) !*Region {

@@ -13,45 +13,84 @@ pub const Id = enum(usize) {
     wake = 11,
 };
 
+pub const Error = IdentifyError || ForkError || SpawnError || KillError || AllocateError || MapError || ShareError || RefcountError || UnmapError;
+
+pub fn packResult(result: Error!usize) usize {
+    if (result) |res| {
+        return res;
+    } else |err| {
+        const signed: isize = switch (err) {
+            error.OutOfMemory => -1,
+            error.InvalidParameter => -2,
+            error.NoPermission => -3,
+            error.Reserved => -4,
+            error.Exists => -5,
+        };
+        return @bitCast(signed);
+    }
+}
+
+fn unpackResult(comptime E: type, a0: usize) E!usize {
+    const signed: isize = @bitCast(a0);
+    const result = switch (signed) {
+        -1 => error.OutOfMemory,
+        -2 => error.InvalidParameter,
+        -3 => error.NoPermission,
+        -4 => error.Reserved,
+        -5 => error.Exists,
+        else => a0,
+    };
+    return @errorCast(result);
+}
+
 pub fn exit(exit_code: usize) noreturn {
     _ = syscall1(.exit, exit_code);
     unreachable;
 }
 
-pub fn identify() usize {
-    return syscall0(.identify);
+pub const IdentifyError = error{};
+pub fn identify() IdentifyError!usize {
+    return unpackResult(IdentifyError, syscall0(.identify));
 }
 
-pub fn fork() usize {
-    return syscall0(.fork);
+pub const ForkError = error{OutOfMemory};
+pub fn fork() ForkError!usize {
+    return unpackResult(ForkError, syscall0(.fork));
 }
 
-pub fn spawn(region_descriptions: []const RegionDescription, entry_point: usize) usize {
-    return syscall3(.spawn, region_descriptions.len, @intFromPtr(region_descriptions.ptr), entry_point);
+pub const SpawnError = error{ InvalidParameter, NoPermission, OutOfMemory, Reserved };
+pub fn spawn(region_descriptions: []const RegionDescription, entry_point: usize) IdentifyError!usize {
+    return unpackResult(syscall3(.spawn, region_descriptions.len, @intFromPtr(region_descriptions.ptr), entry_point));
 }
 
-pub fn kill(pid: usize) usize {
-    return syscall1(.kill, pid);
+pub const KillError = error{NoPermission};
+pub fn kill(pid: usize) KillError!void {
+    unpackResult(syscall1(.kill, pid)) catch |err| return err;
 }
 
-pub fn allocate(size: usize, permissions: Permissions, physical_address: usize) usize {
-    return syscall3(.allocate, size, @bitCast(permissions), physical_address);
+pub const AllocateError = error{ OutOfMemory, InvalidParameter };
+pub fn allocate(size: usize, permissions: Permissions, physical_address: usize) AllocateError!usize {
+    return unpackResult(AllocateError, syscall3(.allocate, size, @bitCast(permissions), physical_address));
 }
 
-pub fn map(region_index: usize, virtual_address: usize) usize {
-    return syscall2(.map, region_index, virtual_address);
+pub const MapError = error{ InvalidParameter, Reserved, NoPermission, Exists };
+pub fn map(region: usize, virtual_address: usize) MapError!usize {
+    return unpackResult(MapError, syscall2(.map, region, virtual_address));
 }
 
-pub fn share(region_index: usize, pid: usize, permissions: Permissions) usize {
-    return syscall3(.share, region_index, pid, @bitCast(permissions));
+pub const ShareError = error{ InvalidParameter, NoPermission, OutOfMemory };
+pub fn share(region: usize, pid: usize, permissions: Permissions) ShareError!void {
+    unpackResult(syscall3(.share, region, pid, @bitCast(permissions))) catch |err| return err;
 }
 
-pub fn refcount(region_index: usize) usize {
-    return syscall1(.refcount, region_index);
+pub const RefcountError = error{ InvalidParameter, NoPermission };
+pub fn refcount(region: usize) RefcountError!usize {
+    return unpackResult(syscall1(.refcount, region));
 }
 
-pub fn unmap(region_index: usize) usize {
-    return syscall1(.unmap, region_index);
+pub const UnmapError = error{InvalidParameter};
+pub fn unmap(region: usize) UnmapError!void {
+    unpackResult(syscall1(.unmap, region)) catch |err| return err;
 }
 
 pub const RegionDescription = packed struct {
@@ -69,7 +108,7 @@ pub const Permissions = packed struct(u64) {
     padding: u61 = 0,
 };
 
-fn syscall0(id: Id) usize {
+inline fn syscall0(id: Id) usize {
     return asm volatile ("ecall"
         : [ret] "={a0}" (-> usize),
         : [id] "{a0}" (@intFromEnum(id)),
@@ -77,7 +116,7 @@ fn syscall0(id: Id) usize {
     );
 }
 
-fn syscall1(id: Id, arg1: usize) usize {
+inline fn syscall1(id: Id, arg1: usize) usize {
     return asm volatile ("ecall"
         : [ret] "={a0}" (-> usize),
         : [id] "{a0}" (@intFromEnum(id)),
@@ -86,7 +125,7 @@ fn syscall1(id: Id, arg1: usize) usize {
     );
 }
 
-fn syscall2(id: Id, arg1: usize, arg2: usize) usize {
+inline fn syscall2(id: Id, arg1: usize, arg2: usize) usize {
     return asm volatile ("ecall"
         : [ret] "={a0}" (-> usize),
         : [id] "{a0}" (@intFromEnum(id)),
@@ -96,7 +135,7 @@ fn syscall2(id: Id, arg1: usize, arg2: usize) usize {
     );
 }
 
-fn syscall3(id: Id, arg1: usize, arg2: usize, arg3: usize) usize {
+inline fn syscall3(id: Id, arg1: usize, arg2: usize, arg3: usize) usize {
     return asm volatile ("ecall"
         : [ret] "={a0}" (-> usize),
         : [id] "{a0}" (@intFromEnum(id)),

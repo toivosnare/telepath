@@ -130,13 +130,13 @@ pub fn allocateRegion(
             return re;
         }
     }
-    return error.RegionEntryTableFull;
+    return error.OutOfMemory;
 }
 
 pub fn mapRegion(self: *Process, region: *Region, address: UserVirtualAddress) !UserVirtualAddress {
     const region_entry = self.hasRegion(region) orelse return error.NoPermission;
     if (region_entry.start_address != null)
-        return error.AlreadyMapped;
+        return error.Exists;
     return self.mapRegionEntry(region_entry, address);
 }
 
@@ -247,7 +247,7 @@ pub fn receiveRegion(self: *Process, region: *Region, permissions: RegionEntry.P
         re.next = null;
         return re;
     }
-    return error.RegionEntryTableFull;
+    return error.OutOfMemory;
 }
 
 fn freeRegionEntry(self: *Process, region_entry: *RegionEntry) void {
