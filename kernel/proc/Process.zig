@@ -144,6 +144,8 @@ pub fn mapRegionEntry(self: *Process, region_entry: *RegionEntry, address: UserV
     if (address == 0) {
         return self.mapRegionEntryWherever(region_entry);
     } else {
+        if (!mem.isAligned(address, @sizeOf(Page)))
+            return error.InvalidParameter;
         try self.mapRegionEntryAtAddress(region_entry, address);
         return address;
     }
