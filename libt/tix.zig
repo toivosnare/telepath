@@ -9,7 +9,8 @@ pub const Header = extern struct {
 pub const RegionHeader = packed struct {
     offset: u64,
     load_address: u64,
-    size: u64,
+    file_size: u64,
+    memory_size: u64,
     executable: bool,
     writable: bool,
     readable: bool,

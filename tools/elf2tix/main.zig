@@ -45,11 +45,11 @@ pub fn main() !void {
     while (try it.next()) |program_header| {
         if (program_header.p_type != elf.PT_LOAD)
             continue;
-        assert(program_header.p_filesz == program_header.p_memsz);
         const region_header = tix.RegionHeader{
             .offset = offset,
             .load_address = program_header.p_vaddr,
-            .size = program_header.p_filesz,
+            .file_size = program_header.p_filesz,
+            .memory_size = program_header.p_memsz,
             .readable = program_header.p_flags & elf.PF_R != 0,
             .writable = program_header.p_flags & elf.PF_W != 0,
             .executable = program_header.p_flags & elf.PF_X != 0,

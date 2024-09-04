@@ -101,7 +101,7 @@ export fn bootHartMain(boot_hart_id: usize, fdt_physical_start: PhysicalAddress,
 
     for (region_headers) |rh| {
         log.debug("region header: {}", .{rh});
-        const region_size_in_pages = math.divCeil(usize, rh.size, @sizeOf(Page)) catch unreachable;
+        const region_size_in_pages = math.divCeil(usize, rh.memory_size, @sizeOf(Page)) catch unreachable;
         const region_entry = init_process.allocateRegion(region_size_in_pages, .{
             .readable = rh.readable,
             .writable = rh.writable,
@@ -115,10 +115,10 @@ export fn bootHartMain(boot_hart_id: usize, fdt_physical_start: PhysicalAddress,
 
         var source: []const u8 = undefined;
         source.ptr = @ptrFromInt(pr.initrd_physical_start + rh.offset);
-        source.len = rh.size;
+        source.len = rh.file_size;
 
         @memcpy(dest, source);
-        log.debug("copied {} bytes from {*} to {*}", .{ rh.size, source.ptr, dest });
+        log.debug("copied {} bytes from {*} to {*}", .{ rh.file_size, source.ptr, dest });
     }
     // mm.page_allocator.freeSlice(initrd_physical_slice);
 
