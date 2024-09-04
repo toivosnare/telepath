@@ -69,7 +69,10 @@ fn handleException(code: csr.scause.ExceptionCode, current_process: *Process) *P
     log.debug("Exception: code={s}, stval={x}", .{ @tagName(code), stval });
     return switch (code) {
         .environment_call_from_u_mode => handleSyscall(current_process),
-        .instruction_page_fault => current_process.handlePageFault(stval),
+        .instruction_page_fault,
+        .load_page_fault,
+        .store_amo_page_fault,
+        => current_process.handlePageFault(stval),
         else => @panic("unhandled exception"),
     };
 }
