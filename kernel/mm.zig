@@ -2,6 +2,7 @@ const std = @import("std");
 const log = std.log;
 const mem = std.mem;
 const assert = std.debug.assert;
+const libt = @import("libt");
 const proc = @import("proc.zig");
 const entry = @import("entry.zig");
 
@@ -107,7 +108,7 @@ pub const PhysicalPageNumber = packed struct(u44) {
 };
 
 pub var ram_physical_slice: PageFrameSlice = undefined;
-pub const max_user_virtual: UserVirtualAddress = 0x3FFFFFFFFF;
+pub const user_virtual_end: UserVirtualAddress = libt.address_space_end;
 pub const logical_start: LogicalAddress = 0xFFFFFFC000000000;
 pub var logical_size: usize = undefined; // In pages.
 pub var logical_offset: usize = 0;

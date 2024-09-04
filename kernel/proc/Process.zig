@@ -179,7 +179,7 @@ fn mapRegionEntryAtAddress(self: *Process, region_entry: *RegionEntry, address: 
     }
 
     // Check that the region mapping would not go past the user virtual address space end.
-    if (region_end > mm.max_user_virtual)
+    if (region_end > mm.user_virtual_end)
         return error.Reserved;
 
     // Update the region entry linked list.
@@ -211,7 +211,7 @@ fn mapRegionEntryWherever(self: *Process, region_entry: *RegionEntry) !UserVirtu
         previous_entry = ne;
         next_entry = ne.next;
     }
-    if (address + region_size > mm.max_user_virtual)
+    if (address + region_size > mm.user_virtual_end)
         return error.Reserved;
 
     // Update the region entry linked list.
@@ -293,7 +293,7 @@ pub fn deinit(self: *Process) void {
 }
 
 pub fn handlePageFault(self: *Process, faulting_address: UserVirtualAddress) *Process {
-    if (faulting_address >= mm.max_user_virtual)
+    if (faulting_address >= mm.user_virtual_end)
         @panic("non user virtual address faulting");
 
     var entry: ?*RegionEntry = self.region_entries_head;

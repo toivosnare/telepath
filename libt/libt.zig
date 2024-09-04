@@ -5,13 +5,14 @@ const options = @import("options");
 pub const syscall = @import("syscall.zig");
 pub const tix = @import("tix.zig");
 
+pub const address_space_end = 0x4000000000;
+
 comptime {
     if (options.include_entry_point)
         @export(_start, .{ .name = "_start" });
 }
 
 fn _start() callconv(.Naked) noreturn {
-    const max_virtual = 0x3FFFFFFFFF;
     // Allocate and map stack, jump to main.
     asm volatile (
         \\li a0, %[allocate_id]
@@ -20,12 +21,13 @@ fn _start() callconv(.Naked) noreturn {
         \\li a3, 0
         \\ecall
         \\bltz a0, 1f
+        \\mv sp, %[stack_address]
+        \\mul a2, a1, %[page_size]
+        \\sub a2, sp, a2
         \\mv a1, a0
         \\li a0, %[map_id]
-        \\mv a2, %[virtual_address]
         \\ecall
         \\bltz a0, 1f
-        \\mv sp, %[stack_address]
         \\jr %[call_main]
         \\1:
         \\li a0, %[exit_id]
@@ -35,10 +37,10 @@ fn _start() callconv(.Naked) noreturn {
         : [allocate_id] "I" (@intFromEnum(syscall.Id.allocate)),
           [stack_size] "I" (options.stack_size),
           [stack_permissions] "I" (syscall.Permissions{ .readable = true, .writable = true }),
+          [stack_address] "{t1}" (address_space_end),
+          [page_size] "{t2}" (std.mem.page_size),
           [map_id] "I" (@intFromEnum(syscall.Id.map)),
-          [virtual_address] "{t0}" (max_virtual - options.stack_size * std.mem.page_size),
-          [stack_address] "{t1}" (max_virtual),
-          [call_main] "{t2}" (&callMain),
+          [call_main] "{t3}" (@intFromPtr(&callMain)),
           [exit_id] "I" (@intFromEnum(syscall.Id.exit)),
     );
 }
