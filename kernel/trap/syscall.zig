@@ -50,8 +50,6 @@ pub fn fork(process: *Process) ForkError!usize {
 
 pub const SpawnError = libt.syscall.SpawnError;
 pub fn spawn(process: *Process) SpawnError!usize {
-    log.debug("Process with ID {d} is spawning.", .{process.id});
-
     const region_amount = process.context.register_file.a1;
     if (region_amount == 0)
         return error.InvalidParameter;
@@ -59,10 +57,21 @@ pub fn spawn(process: *Process) SpawnError!usize {
     const region_descriptions_int = process.context.register_file.a2;
     if (region_descriptions_int == 0)
         return error.InvalidParameter;
-
     const region_descriptions_ptr: [*]libt.syscall.RegionDescription = @ptrFromInt(region_descriptions_int);
     const region_descriptions: []libt.syscall.RegionDescription = region_descriptions_ptr[0..region_amount];
-    const entry_point = process.context.register_file.a3;
+
+    const argument_amount = process.context.register_file.a3;
+    if (argument_amount > 7)
+        return error.InvalidParameter;
+
+    const arguments_int = process.context.register_file.a4;
+    if (arguments_int == 0)
+        return error.InvalidParameter;
+    const arguments_ptr: [*]usize = @ptrFromInt(arguments_int);
+    const arguments: []usize = arguments_ptr[0..region_amount];
+
+    const entry_point = process.context.register_file.a5;
+    log.debug("Process with ID {d} is spawning with {d} regions and {d} arguments.", .{ process.id, region_amount, argument_amount });
 
     for (region_descriptions) |region_description| {
         const region = try Region.fromIndex(region_description.region_index);
@@ -94,7 +103,11 @@ pub fn spawn(process: *Process) SpawnError!usize {
         _ = try child_process.mapRegionEntry(region_entry, region_description.start_address);
     }
 
-    child_process.context.register_file.a0 = process.id;
+    child_process.context.register_file.a0 = argument_amount;
+    const registers: [*]usize = @ptrCast(&child_process.context.register_file.a1);
+    for (arguments, registers) |arg, *reg|
+        reg.* = arg;
+
     child_process.context.register_file.pc = entry_point;
     proc.enqueue(child_process);
     return child_process.id;

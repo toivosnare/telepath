@@ -14,6 +14,12 @@ comptime {
 }
 
 fn _start() callconv(.Naked) noreturn {
+    asm volatile (
+        \\mv s0, a0
+        \\mv s1, a1
+        \\mv s2, a2
+        \\mv s3, a3
+    );
     // Allocate and map stack, jump to main.
     asm volatile (
         \\li a0, %[allocate_id]
@@ -29,6 +35,10 @@ fn _start() callconv(.Naked) noreturn {
         \\li a0, %[map_id]
         \\ecall
         \\bltz a0, 1f
+        \\mv a0, s0
+        \\mv a1, s1
+        \\mv a2, s2
+        \\mv a3, s3
         \\jr %[call_main]
         \\1:
         \\li a0, %[exit_id]
@@ -46,22 +56,25 @@ fn _start() callconv(.Naked) noreturn {
     );
 }
 
-fn callMain() noreturn {
+fn callMain(a0: usize, a1: usize, a2: usize, a3: usize, a4: usize, a5: usize, a6: usize, a7: usize) noreturn {
+    var args_array: [7]usize = .{ a1, a2, a3, a4, a5, a6, a7 };
+    const args: []usize = (&args_array)[0..a0];
+
     const bad_main_ret = "expected return type of main to be 'void', '!void', 'noreturn', 'usize', or '!usize'";
     const ReturnType = @typeInfo(@TypeOf(root.main)).Fn.return_type.?;
     const exit_code: usize = switch (@typeInfo(ReturnType)) {
-        .NoReturn => root.main(),
+        .NoReturn => root.main(args),
         .Void => blk: {
-            root.main();
+            root.main(args);
             break :blk 0;
         },
         .Int => blk: {
             if (ReturnType != usize)
                 @compileError(bad_main_ret);
-            break :blk root.main();
+            break :blk root.main(args);
         },
         .ErrorUnion => blk: {
-            const result = root.main() catch break :blk 1;
+            const result = root.main(args) catch break :blk 1;
             const NormalType = @TypeOf(result);
             switch (@typeInfo(NormalType)) {
                 .Void => break :blk 0,

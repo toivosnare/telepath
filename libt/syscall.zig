@@ -60,8 +60,15 @@ pub fn fork() ForkError!usize {
 }
 
 pub const SpawnError = error{ InvalidParameter, NoPermission, OutOfMemory, Reserved };
-pub fn spawn(region_descriptions: []const RegionDescription, entry_point: usize) IdentifyError!usize {
-    return unpackResult(syscall3(.spawn, region_descriptions.len, @intFromPtr(region_descriptions.ptr), entry_point));
+pub fn spawn(region_descriptions: []const RegionDescription, arguments: []usize, entry_point: usize) SpawnError!usize {
+    return unpackResult(SpawnError, syscall5(
+        .spawn,
+        region_descriptions.len,
+        @intFromPtr(region_descriptions.ptr),
+        arguments.len,
+        @intFromPtr(arguments.ptr),
+        entry_point,
+    ));
 }
 
 pub const KillError = error{NoPermission};
@@ -148,6 +155,19 @@ inline fn syscall3(id: Id, arg1: usize, arg2: usize, arg3: usize) usize {
           [arg1] "{a1}" (arg1),
           [arg2] "{a2}" (arg2),
           [arg3] "{a3}" (arg3),
+        : "memory"
+    );
+}
+
+inline fn syscall5(id: Id, arg1: usize, arg2: usize, arg3: usize, arg4: usize, arg5: usize) usize {
+    return asm volatile ("ecall"
+        : [ret] "={a0}" (-> usize),
+        : [id] "{a0}" (@intFromEnum(id)),
+          [arg1] "{a1}" (arg1),
+          [arg2] "{a2}" (arg2),
+          [arg3] "{a3}" (arg3),
+          [arg4] "{a4}" (arg4),
+          [arg5] "{a5}" (arg5),
         : "memory"
     );
 }

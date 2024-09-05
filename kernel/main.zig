@@ -120,12 +120,7 @@ export fn bootHartMain(boot_hart_id: usize, fdt_physical_start: PhysicalAddress,
         @memcpy(dest, source);
         log.debug("copied {} bytes from {*} to {*}", .{ rh.file_size, source.ptr, dest });
     }
-    // mm.page_allocator.freeSlice(initrd_physical_slice);
-
-    const v: ConstPagePtr = @ptrFromInt(mem.alignBackward(UserVirtualAddress, init_process.context.register_file.pc, @sizeOf(Page)));
-    const entry_region = init_process.region_entries[1].region.?;
-    const p: ConstPageFramePtr = @ptrCast(entry_region.allocation.ptr);
-    init_process.page_table.map(v, p, .{ .valid = true, .readable = true, .writable = true, .executable = true, .user = true });
+    init_process.context.register_file.a0 = 0;
 
     // const fdt_region = Region.findFree() catch @panic("findFree");
     // fdt_region.ref_count = 1;
