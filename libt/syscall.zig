@@ -73,7 +73,7 @@ pub fn spawn(region_descriptions: []const RegionDescription, arguments: []usize,
 
 pub const KillError = error{NoPermission};
 pub fn kill(pid: usize) KillError!void {
-    unpackResult(syscall1(.kill, pid)) catch |err| return err;
+    _ = unpackResult(KillError, syscall1(.kill, pid)) catch |err| return err;
 }
 
 pub const AllocateError = error{ OutOfMemory, InvalidParameter };
@@ -88,12 +88,12 @@ pub fn map(region: usize, virtual_address: usize) MapError!usize {
 
 pub const ShareError = error{ InvalidParameter, NoPermission, OutOfMemory };
 pub fn share(region: usize, pid: usize, permissions: Permissions) ShareError!void {
-    unpackResult(syscall3(.share, region, pid, @bitCast(permissions))) catch |err| return err;
+    _ = unpackResult(ShareError, syscall3(.share, region, pid, @bitCast(permissions))) catch |err| return err;
 }
 
 pub const RefcountError = error{ InvalidParameter, NoPermission };
 pub fn refcount(region: usize) RefcountError!usize {
-    return unpackResult(syscall1(.refcount, region));
+    return unpackResult(RefcountError, syscall1(.refcount, region));
 }
 
 pub const UnmapError = error{ InvalidParameter, Exists };
