@@ -22,6 +22,9 @@ pub fn init() void {
         .lcofie = true,
     });
     csr.sstatus.set(.sie);
+
+    // Some syscall need to access user space memory.
+    csr.sstatus.set(.sum);
 }
 
 pub fn onAddressTranslationEnabled() void {
