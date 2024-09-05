@@ -183,6 +183,17 @@ pub fn unmap(process: *Process) UnmapError!usize {
     log.debug("Process with ID {d} is unmapping region at address {d}.", .{ process.id, address });
 
     const region_entry = process.hasRegionAtAddress(address) orelse return error.InvalidParameter;
-    process.unmapRegionEntry(region_entry);
+    try process.unmapRegionEntry(region_entry);
     return region_entry.region.?.index();
+}
+
+pub const FreeError = libt.syscall.FreeError;
+pub fn free(process: *Process) FreeError!usize {
+    const region_index = process.context.register_file.a1;
+    log.debug("Process with ID {d} is freeing region {d}.", .{ process.id, region_index });
+
+    const region = try Region.fromIndex(region_index);
+    const region_entry = process.hasRegion(region) orelse return error.NoPermission;
+    try process.freeRegionEntry(region_entry);
+    return 0;
 }

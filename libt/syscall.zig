@@ -9,8 +9,9 @@ pub const Id = enum(usize) {
     share = 7,
     refcount = 8,
     unmap = 9,
-    wait = 10,
-    wake = 11,
+    free = 10,
+    wait = 11,
+    wake = 12,
 };
 
 pub const Error = IdentifyError || ForkError || SpawnError || KillError || AllocateError || MapError || ShareError || RefcountError || UnmapError;
@@ -88,9 +89,14 @@ pub fn refcount(region: usize) RefcountError!usize {
     return unpackResult(syscall1(.refcount, region));
 }
 
-pub const UnmapError = error{InvalidParameter};
+pub const UnmapError = error{ InvalidParameter, Exists };
 pub fn unmap(address: usize) UnmapError!usize {
-    return unpackResult(syscall1(.unmap, address));
+    return unpackResult(UnmapError, syscall1(.unmap, address));
+}
+
+pub const FreeError = error{ InvalidParameter, NoPermission, Exists };
+pub fn free(region: usize) FreeError!void {
+    _ = unpackResult(FreeError, syscall1(.free, region)) catch |err| return err;
 }
 
 pub const RegionDescription = packed struct {

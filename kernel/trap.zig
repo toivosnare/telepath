@@ -99,6 +99,7 @@ fn handleSyscall(current_process: *Process) *Process {
         .share => syscall.share(current_process),
         .refcount => syscall.refcount(current_process),
         .unmap => syscall.unmap(current_process),
+        .free => syscall.free(current_process),
         else => @panic("unhandled syscall"),
     };
     current_process.context.register_file.a0 = libt.syscall.packResult(result);

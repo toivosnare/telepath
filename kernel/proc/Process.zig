@@ -252,22 +252,22 @@ pub fn receiveRegion(self: *Process, region: *Region, permissions: RegionEntry.P
     return error.OutOfMemory;
 }
 
-fn freeRegionEntry(self: *Process, region_entry: *RegionEntry) void {
-    if (region_entry.region == null)
-        return;
-    if (region_entry.start_address != null) {
-        self.unmapRegionEntry(region_entry);
-    }
-    region_entry.region.?.free();
-    region_entry.region = null;
-}
-
-pub fn unmapRegionEntry(self: *Process, region_entry: *RegionEntry) void {
+pub fn unmapRegionEntry(self: *Process, region_entry: *RegionEntry) !void {
     _ = self;
-    assert(region_entry.start_address != null);
+    if (region_entry.start_address == null)
+        return error.Exists;
     // TODO: fix linked list.
     // TODO: unmap from page table.
     region_entry.start_address = null;
+}
+
+pub fn freeRegionEntry(self: *Process, region_entry: *RegionEntry) !void {
+    _ = self;
+    if (region_entry.start_address != null)
+        return error.Exists;
+    assert(region_entry.region != null);
+    region_entry.region.?.free();
+    region_entry.region = null;
 }
 
 pub fn deinit(self: *Process) void {
@@ -276,7 +276,10 @@ pub fn deinit(self: *Process) void {
     }
     self.state = .invalid;
     for (&self.region_entries) |*region_entry| {
-        self.freeRegionEntry(region_entry);
+        if (region_entry.region == null)
+            continue;
+        self.unmapRegionEntry(region_entry) catch {};
+        self.freeRegionEntry(region_entry) catch unreachable;
     }
     self.region_entries_head = null;
     // TODO: page table?
