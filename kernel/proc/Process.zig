@@ -262,12 +262,6 @@ fn freeRegionEntry(self: *Process, region_entry: *RegionEntry) void {
     region_entry.region = null;
 }
 
-pub fn unmapRegion(self: *Process, region: *Region) void {
-    if (self.hasRegion(region)) |region_entry| {
-        self.unmapRegionEntry(region_entry);
-    }
-}
-
 pub fn unmapRegionEntry(self: *Process, region_entry: *RegionEntry) void {
     _ = self;
     assert(region_entry.start_address != null);
@@ -322,6 +316,14 @@ pub fn handlePageFault(self: *Process, faulting_address: UserVirtualAddress) *Pr
 pub fn hasRegion(self: *Process, region: *const Region) ?*RegionEntry {
     for (&self.region_entries) |*region_entry| {
         if (region_entry.region == region)
+            return region_entry;
+    }
+    return null;
+}
+
+pub fn hasRegionAtAddress(self: *Process, address: UserVirtualAddress) ?*RegionEntry {
+    for (&self.region_entries) |*region_entry| {
+        if (region_entry.start_address == address)
             return region_entry;
     }
     return null;

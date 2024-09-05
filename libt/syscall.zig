@@ -89,8 +89,8 @@ pub fn refcount(region: usize) RefcountError!usize {
 }
 
 pub const UnmapError = error{InvalidParameter};
-pub fn unmap(region: usize) UnmapError!void {
-    unpackResult(syscall1(.unmap, region)) catch |err| return err;
+pub fn unmap(address: usize) UnmapError!usize {
+    return unpackResult(syscall1(.unmap, address));
 }
 
 pub const RegionDescription = packed struct {

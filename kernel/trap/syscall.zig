@@ -179,10 +179,10 @@ pub fn refcount(process: *Process) RefcountError!usize {
 
 pub const UnmapError = libt.syscall.UnmapError;
 pub fn unmap(process: *Process) UnmapError!usize {
-    const region_index = process.context.register_file.a1;
-    log.debug("Process with ID {d} is unmapping region {d}.", .{ process.id, region_index });
+    const address = process.context.register_file.a1;
+    log.debug("Process with ID {d} is unmapping region at address {d}.", .{ process.id, address });
 
-    const region = try Region.fromIndex(region_index);
-    process.unmapRegion(region);
-    return 0;
+    const region_entry = process.hasRegionAtAddress(address) orelse return error.InvalidParameter;
+    process.unmapRegionEntry(region_entry);
+    return region_entry.region.?.index();
 }
