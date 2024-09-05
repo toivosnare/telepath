@@ -2,6 +2,7 @@ const std = @import("std");
 const root = @import("root");
 const options = @import("options");
 
+pub const heap = @import("heap.zig");
 pub const syscall = @import("syscall.zig");
 pub const tix = @import("tix.zig");
 
