@@ -3,7 +3,7 @@ const mm = @import("mm.zig");
 const proc = @import("proc.zig");
 const trap = @import("trap.zig");
 const fdt = @import("fdt.zig");
-const csr = @import("csr.zig");
+const riscv = @import("riscv.zig");
 const libt = @import("libt");
 const sbi = @import("sbi");
 const log = std.log;
@@ -155,8 +155,8 @@ export fn main() noreturn {
     mm.page_allocator.onAddressTranslationEnabled();
     const init_process = proc.onAddressTranslationEnabled();
     log.info("Address translation enabled for boot hart.", .{});
-    csr.sstatus.clear(.spp);
-    sbi.time.setTimer(csr.time.read() + 10 * 1_000_000);
+    riscv.sstatus.clear(.spp);
+    sbi.time.setTimer(riscv.time.read() + 10 * 1_000_000);
     returnToUserspace(&init_process.context);
 }
 

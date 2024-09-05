@@ -3,7 +3,7 @@ const log = std.log;
 const math = std.math;
 const mem = std.mem;
 const mm = @import("mm.zig");
-const csr = @import("csr.zig");
+const riscv = @import("riscv.zig");
 const PhysicalPageNumber = mm.PhysicalPageNumber;
 const PageTable = mm.PageTable;
 
@@ -114,7 +114,7 @@ pub fn contextSwitch(process: *Process) void {
     log.debug("Switching context to process with ID {d}.", .{process.id});
     process.state = .running;
     // process.context.hart_index = hart_index;
-    csr.satp.write(.{
+    riscv.satp.write(.{
         .ppn = @bitCast(PhysicalPageNumber.fromPageTable(process.page_table)),
         .asid = 0,
         .mode = .sv39,
