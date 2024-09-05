@@ -4,6 +4,7 @@ const assert = std.debug.assert;
 const mem = std.mem;
 const mm = @import("../mm.zig");
 const proc = @import("../proc.zig");
+const riscv = @import("../riscv.zig");
 const Region = mm.Region;
 const PhysicalAddress = mm.PhysicalAddress;
 const UserVirtualAddress = mm.UserVirtualAddress;
@@ -259,6 +260,7 @@ pub fn unmapRegionEntry(self: *Process, region_entry: *RegionEntry) !void {
     // TODO: fix linked list.
     // TODO: unmap from page table.
     region_entry.start_address = null;
+    riscv.@"sfence.vma"(null, null);
 }
 
 pub fn freeRegionEntry(self: *Process, region_entry: *RegionEntry) !void {
@@ -307,6 +309,7 @@ pub fn handlePageFault(self: *Process, faulting_address: UserVirtualAddress) *Pr
                 .user = true,
                 .global = false,
             });
+            riscv.@"sfence.vma"(faulting_address, null);
             break;
         }
     } else {

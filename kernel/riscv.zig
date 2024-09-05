@@ -107,6 +107,32 @@ pub const satp = Csr("satp", packed struct(u64) {
 pub const stval = Csr("stval", u64);
 pub const time = Csr("time", u64);
 
+pub inline fn @"sfence.vma"(address: ?usize, address_space: ?usize) void {
+    if (address) |a| {
+        if (address_space) |as| {
+            asm volatile ("sfence.vma %[address], %[address_space]"
+                :
+                : [address] "r" (a),
+                  [address_space] "r" (as),
+            );
+        } else {
+            asm volatile ("sfence.vma %[address], x0"
+                :
+                : [address] "r" (a),
+            );
+        }
+    } else {
+        if (address_space) |as| {
+            asm volatile ("sfence.vma x0, %[address_space]"
+                :
+                : [address_space] "r" (as),
+            );
+        } else {
+            asm volatile ("sfence.vma x0, x0");
+        }
+    }
+}
+
 fn Csr(comptime name: []const u8, comptime T: type) type {
     if (@bitSizeOf(T) != @bitSizeOf(usize))
         @compileError("T must be word sized.");

@@ -119,7 +119,7 @@ pub fn contextSwitch(process: *Process) void {
         .asid = 0,
         .mode = .sv39,
     });
-    asm volatile ("sfence.vma");
+    riscv.@"sfence.vma"(null, null);
 }
 
 pub fn processFromId(id: Process.Id) ?*Process {
