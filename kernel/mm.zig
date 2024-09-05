@@ -63,6 +63,16 @@ pub const PageTable = struct {
         pte.permissions = permissions;
     }
 
+    pub fn unmapRange(self: Ptr, virtual: ConstPageSlice) void {
+        for (virtual) |*v|
+            self.unmap(v);
+    }
+
+    pub fn unmap(self: Ptr, virtual: ConstPagePtr) void {
+        const pte: *Entry = self.walk(virtual);
+        pte.permissions = .{};
+    }
+
     pub fn walk(self: Ptr, virtual: ConstPagePtr) *Entry {
         var page_table: Ptr = self;
         var level: Level = 2;

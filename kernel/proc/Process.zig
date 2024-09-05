@@ -11,6 +11,7 @@ const UserVirtualAddress = mm.UserVirtualAddress;
 const LogicalAddress = mm.LogicalAddress;
 const Page = mm.Page;
 const ConstPagePtr = mm.ConstPagePtr;
+const PageSlice = mm.PageSlice;
 const ConstPageFramePtr = mm.ConstPageFramePtr;
 const PageTable = mm.PageTable;
 const HartIndex = proc.HartIndex;
@@ -65,6 +66,18 @@ pub const RegionEntry = struct {
 
         const offset_from_region_start = address - self.start_address.?;
         return @intFromPtr(self.region.?.allocation.ptr) + offset_from_region_start;
+    }
+
+    pub fn virtualSlice(self: RegionEntry) ?PageSlice {
+        if (self.start_address == null)
+            return null;
+        if (self.region == null)
+            return null;
+
+        var result: PageSlice = undefined;
+        result.ptr = @ptrFromInt(self.start_address.?);
+        result.len = self.region.?.size;
+        return result;
     }
 };
 pub const Context = extern struct {
@@ -254,11 +267,23 @@ pub fn receiveRegion(self: *Process, region: *Region, permissions: RegionEntry.P
 }
 
 pub fn unmapRegionEntry(self: *Process, region_entry: *RegionEntry) !void {
-    _ = self;
+    assert(region_entry.region != null);
+
     if (region_entry.start_address == null)
         return error.Exists;
-    // TODO: fix linked list.
-    // TODO: unmap from page table.
+
+    if (region_entry.prev) |prev| {
+        prev.next = region_entry.next;
+    } else {
+        self.region_entries_head = region_entry.next;
+    }
+    if (region_entry.next) |next|
+        next.prev = region_entry.prev;
+    region_entry.prev = null;
+    region_entry.next = null;
+
+    const virtual = region_entry.virtualSlice() orelse unreachable;
+    self.page_table.unmapRange(virtual);
     region_entry.start_address = null;
     riscv.@"sfence.vma"(null, null);
 }
