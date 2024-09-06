@@ -169,7 +169,7 @@ inline fn syscall6(id: Id, arg1: usize, arg2: usize, arg3: usize, arg4: usize, a
           [arg3] "{a3}" (arg3),
           [arg4] "{a4}" (arg4),
           [arg5] "{a5}" (arg5),
-          [arg5] "{a6}" (arg6),
+          [arg6] "{a6}" (arg6),
         : "memory"
     );
 }

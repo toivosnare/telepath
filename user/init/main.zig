@@ -10,25 +10,61 @@ const syscall = libt.syscall;
 
 pub const os = libt;
 
-comptime {
-    _ = libt;
-}
-
+const stack_size = 0x10;
 const DriverMap = std.StringHashMap([]const u8);
 
-pub fn main(args: []usize) !usize {
-    _ = args;
+export fn _start() callconv(.Naked) noreturn {
+    // Save FDT address.
+    asm volatile ("mv s0, a0");
 
+    // Allocate and map stack, jump to main.
+    asm volatile (
+        \\li a0, %[allocate_id]
+        \\li a1, %[stack_size]
+        \\li a2, %[stack_permissions]
+        \\li a3, 0
+        \\ecall
+        \\bltz a0, 1f
+        \\mv sp, %[stack_address]
+        \\mul a2, a1, %[page_size]
+        \\sub a2, sp, a2
+        \\mv a1, a0
+        \\li a0, %[map_id]
+        \\ecall
+        \\bltz a0, 1f
+        \\mv a0, s0
+        \\jalr %[main]
+        \\1:
+        \\mv a1, a0
+        \\li a0, %[exit_id]
+        \\ecall
+        :
+        : [allocate_id] "I" (@intFromEnum(syscall.Id.allocate)),
+          [stack_size] "I" (stack_size),
+          [stack_permissions] "I" (syscall.Permissions{ .readable = true, .writable = true }),
+          [stack_address] "{t1}" (libt.address_space_end),
+          [page_size] "{t2}" (mem.page_size),
+          [map_id] "I" (@intFromEnum(syscall.Id.map)),
+          [main] "{t3}" (&main),
+          [exit_id] "I" (@intFromEnum(syscall.Id.exit)),
+    );
+}
+
+pub fn main() noreturn {
     var gpa = heap.GeneralPurposeAllocator(.{
         .thread_safe = false,
         .safety = false,
     }){};
     var driver_map = DriverMap.init(gpa.allocator());
-    try populateDriverMap(&driver_map);
+    populateDriverMap(&driver_map) catch hang();
 
     if (driver_map.get("ns16550a")) |elf_file|
-        _ = try loadElf(elf_file);
+        _ = loadElf(elf_file) catch hang();
 
+    hang();
+}
+
+fn hang() noreturn {
     while (true) {}
 }
 
@@ -86,5 +122,14 @@ fn loadElf(elf_bytes: []const u8) !usize {
         _ = syscall.unmap(address) catch unreachable;
     }
 
-    return syscall.spawn(regions.constSlice(), &arguments, header.entry, 0);
+    // Allocate a stack for the process.
+    const region = try syscall.allocate(stack_size, .{ .readable = true, .writable = true }, 0);
+    var rd: *syscall.RegionDescription = try regions.addOne();
+    rd.region_index = @intCast(region);
+    rd.start_address = libt.address_space_end - stack_size * mem.page_size;
+    rd.readable = true;
+    rd.writable = true;
+    rd.executable = false;
+
+    return syscall.spawn(regions.constSlice(), &arguments, header.entry, libt.address_space_end);
 }

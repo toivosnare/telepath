@@ -9,7 +9,6 @@ pub fn build(b: *Build) void {
     const libt = b.dependency("libt", .{
         .target = target,
         .optimize = optimize,
-        .include_entry_point = true,
     });
     const ns16550a = b.dependency("ns16550a", .{
         .optimize = optimize,
