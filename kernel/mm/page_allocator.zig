@@ -8,7 +8,7 @@ const PageSlice = mm.PageSlice;
 const PageFrameSlice = mm.PageFrameSlice;
 const ConstPageFrameSlice = mm.ConstPageFrameSlice;
 
-const MAX_ORDER = 3;
+const MAX_ORDER = 12;
 
 var buckets: *[MAX_ORDER]Bucket = undefined;
 var bitfield: std.PackedIntSlice(u1) = undefined;
