@@ -101,7 +101,8 @@ pub fn spawn(process: *Process) SpawnError!usize {
             .writable = region_description.writable,
             .executable = region_description.executable,
         });
-        _ = try child_process.mapRegionEntry(region_entry, region_description.start_address);
+        if (region_description.start_address != 0)
+            _ = try child_process.mapRegionEntry(region_entry, region_description.start_address);
     }
 
     child_process.context.register_file.a0 = argument_amount;
