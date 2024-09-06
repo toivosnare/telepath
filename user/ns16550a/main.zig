@@ -1,3 +1,5 @@
+const std = @import("std");
+const mem = std.mem;
 const libt = @import("libt");
 const syscall = libt.syscall;
 
@@ -144,13 +146,15 @@ const Ns16550A = packed struct {
 };
 
 pub fn main(args: []usize) noreturn {
-    _ = args;
-
     const physical_address = 0x10000000;
     const region = syscall.allocate(1, .{ .readable = true, .writable = true }, physical_address) catch unreachable;
     const ns16550a: *volatile Ns16550A = @ptrFromInt(syscall.map(region, 0) catch unreachable);
     ns16550a.init();
 
-    ns16550a.puts("Hello, world (from ns16550a)!\n");
+    if (args.len > 0) {
+        var c: [*]const u8 = @ptrFromInt(syscall.map(args[0], 0) catch unreachable);
+        while (c[0] != 0) : (c += 1)
+            ns16550a.putc(c[0]);
+    }
     while (true) {}
 }

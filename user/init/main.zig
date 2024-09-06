@@ -131,5 +131,18 @@ fn loadElf(elf_bytes: []const u8) !usize {
     rd.writable = true;
     rd.executable = false;
 
-    return syscall.spawn(regions.constSlice(), &arguments, header.entry, libt.address_space_end);
+    // Test sending a message over shared memory region.
+    const shared_region = try syscall.allocate(1, .{ .readable = true, .writable = true }, 0);
+    rd = try regions.addOne();
+    rd.region_index = @intCast(shared_region);
+    rd.start_address = 0;
+    rd.readable = true;
+    rd.writable = false;
+    rd.executable = false;
+
+    const addr: [*]u8 = @ptrFromInt(try syscall.map(shared_region, 0));
+    @memcpy(addr, "Hello from init!\n");
+    arguments[0] = shared_region;
+
+    return syscall.spawn(regions.constSlice(), (&arguments)[0..1], header.entry, libt.address_space_end);
 }
