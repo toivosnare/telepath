@@ -86,5 +86,5 @@ fn loadElf(elf_bytes: []const u8) !usize {
         _ = syscall.unmap(address) catch unreachable;
     }
 
-    return syscall.spawn(regions.constSlice(), &arguments, header.entry);
+    return syscall.spawn(regions.constSlice(), &arguments, header.entry, 0);
 }

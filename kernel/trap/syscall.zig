@@ -71,6 +71,7 @@ pub fn spawn(process: *Process) SpawnError!usize {
     const arguments: []usize = arguments_ptr[0..region_amount];
 
     const entry_point = process.context.register_file.a5;
+    const stack_pointer = process.context.register_file.a6;
     log.debug("Process with ID {d} is spawning with {d} regions and {d} arguments.", .{ process.id, region_amount, argument_amount });
 
     for (region_descriptions) |region_description| {
@@ -109,6 +110,7 @@ pub fn spawn(process: *Process) SpawnError!usize {
         reg.* = arg;
 
     child_process.context.register_file.pc = entry_point;
+    child_process.context.register_file.sp = stack_pointer;
     proc.enqueue(child_process);
     return child_process.id;
 }
