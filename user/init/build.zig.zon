@@ -6,6 +6,9 @@
         .libt = .{
             .path = "../../libt",
         },
+        .ns16550a = .{
+            .path = "../ns16550a",
+        },
     },
     .paths = .{
         "build.zig",
