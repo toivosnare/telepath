@@ -60,14 +60,19 @@ pub fn fork() ForkError!usize {
 }
 
 pub const SpawnError = error{ InvalidParameter, NoPermission, OutOfMemory, Reserved };
-pub fn spawn(region_descriptions: []const RegionDescription, arguments: []usize, entry_point: usize, stack_pointer: usize) SpawnError!usize {
+pub fn spawn(
+    region_descriptions: []const RegionDescription,
+    arguments: []const usize,
+    instruction_pointer: usize,
+    stack_pointer: usize,
+) SpawnError!usize {
     return unpackResult(SpawnError, syscall6(
         .spawn,
         region_descriptions.len,
         @intFromPtr(region_descriptions.ptr),
         arguments.len,
         @intFromPtr(arguments.ptr),
-        entry_point,
+        instruction_pointer,
         stack_pointer,
     ));
 }
