@@ -64,9 +64,9 @@ pub fn parse(fdt_physical_start: PhysicalAddress) ParseResult {
                 switch (state) {
                     .chosen => {
                         if (mem.eql(u8, p.name, "linux,initrd-start")) {
-                            initrd_start = mem.bigToNative(u32, @as(*const u32, @ptrCast(@alignCast(p.value))).*);
+                            initrd_start = mem.bigToNative(u32, @as(*const u32, @ptrCast(@alignCast(p.value[4..8]))).*);
                         } else if (mem.eql(u8, p.name, "linux,initrd-end")) {
-                            initrd_end = mem.bigToNative(u32, @as(*const u32, @ptrCast(@alignCast(p.value))).*);
+                            initrd_end = mem.bigToNative(u32, @as(*const u32, @ptrCast(@alignCast(p.value[4..8]))).*);
                         }
                     },
                     .memory => {
