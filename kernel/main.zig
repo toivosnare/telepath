@@ -16,6 +16,7 @@ const UserVirtualAddress = mm.UserVirtualAddress;
 const KernelVirtualAddress = mm.KernelVirtualAddress;
 const Page = mm.Page;
 const ConstPagePtr = mm.ConstPagePtr;
+const PageSlice = mm.PageSlice;
 const ConstPageSlice = mm.ConstPageSlice;
 const ConstPageFramePtr = mm.ConstPageFramePtr;
 const PageFrameSlice = mm.PageFrameSlice;
@@ -63,13 +64,13 @@ export fn bootHartMain(boot_hart_id: usize, fdt_physical_start: PhysicalAddress,
     heap_physical_slice.ptr = @ptrFromInt(heap_physical_start);
     heap_physical_slice.len = mm.logical_size;
 
+    var tix_physical_slice: PageFrameSlice = undefined;
+    tix_physical_slice.ptr = @ptrFromInt(mem.alignBackward(PhysicalAddress, pr.initrd_physical_start, @sizeOf(Page)));
+    tix_physical_slice.len = math.divCeil(usize, pr.initrd_size, @sizeOf(Page)) catch unreachable;
+
     var fdt_physical_slice: PageFrameSlice = undefined;
     fdt_physical_slice.ptr = @ptrFromInt(mem.alignBackward(PhysicalAddress, fdt_physical_start, @sizeOf(Page)));
     fdt_physical_slice.len = math.divCeil(usize, pr.fdt_size, @sizeOf(Page)) catch unreachable;
-
-    var initrd_physical_slice: PageFrameSlice = undefined;
-    initrd_physical_slice.ptr = @ptrFromInt(mem.alignBackward(PhysicalAddress, pr.initrd_physical_start, @sizeOf(Page)));
-    initrd_physical_slice.len = math.divCeil(usize, pr.initrd_size, @sizeOf(Page)) catch unreachable;
 
     var kernel_slice: ConstPageSlice = undefined;
     kernel_slice.ptr = @ptrFromInt(mm.kernel_start);
@@ -79,7 +80,9 @@ export fn bootHartMain(boot_hart_id: usize, fdt_physical_start: PhysicalAddress,
     logical_slice.ptr = @ptrFromInt(mm.logical_start);
     logical_slice.len = mm.logical_size;
 
-    mm.init(heap_physical_slice, &fdt_physical_slice, &initrd_physical_slice);
+    var tix_allocations: PageSlice = undefined;
+    var fdt_allocations: PageSlice = undefined;
+    mm.init(heap_physical_slice, tix_physical_slice, fdt_physical_slice, &tix_allocations, &fdt_allocations);
     proc.init();
 
     const init_process = proc.allocate() catch @panic("OOM");
@@ -120,17 +123,33 @@ export fn bootHartMain(boot_hart_id: usize, fdt_physical_start: PhysicalAddress,
         @memcpy(dest, source);
         log.debug("copied {} bytes from {*} to {*}", .{ rh.file_size, source.ptr, dest });
     }
-    init_process.context.register_file.a0 = 0;
+    var start: usize = 0;
+    var end: usize = mm.page_allocator.max_order_pages;
+    while (end <= tix_allocations.len) {
+        const slice = tix_allocations[start..end];
+        mm.page_allocator.free(slice);
+        start = end;
+        end += mm.page_allocator.max_order_pages;
+    }
 
-    // const fdt_region = Region.findFree() catch @panic("findFree");
-    // fdt_region.ref_count = 1;
-    // fdt_region.allocation = _;
-    // fdt_region.size = fdt_physical_slice.len;
-    // const fdt_region_entry = init_process.receiveRegion(fdt_region, .{ .readable = true }) catch @panic("receiveRegion");
-    // const fdt_page_address = init_process.mapRegionEntry(fdt_region_entry, null) catch @panic("mapRegionEntry");
-    // const fdt_page_offset = fdt_physical_start % @sizeOf(Page);
-    // const fdt_virtual_start = fdt_page_address + fdt_page_offset;
-    // init_process.context.register_file.a0 = fdt_virtual_start;
+    const fdt_region_entry = init_process.allocateRegion(fdt_physical_slice.len, .{ .readable = true }, 0) catch @panic("OOM");
+    const fdt_address = init_process.mapRegionEntry(fdt_region_entry, 0) catch @panic("mapRegionEntry");
+    init_process.context.register_file.a0 = fdt_address;
+
+    const dest: [*]u8 = @ptrCast(fdt_region_entry.region.?.allocation.ptr);
+    var source: []u8 = undefined;
+    source.ptr = @ptrFromInt(fdt_physical_start);
+    source.len = pr.fdt_size;
+    @memcpy(dest, source);
+
+    start = 0;
+    end = mm.page_allocator.max_order_pages;
+    while (end <= fdt_allocations.len) {
+        const slice = fdt_allocations[start..end];
+        mm.page_allocator.free(slice);
+        start = end;
+        end += mm.page_allocator.max_order_pages;
+    }
 
     const satp = (8 << 60) | @intFromPtr(init_process.page_table) >> 12;
     mm.logical_offset = mm.logical_start -% heap_physical_start;

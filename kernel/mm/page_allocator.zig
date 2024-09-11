@@ -8,9 +8,10 @@ const PageSlice = mm.PageSlice;
 const PageFrameSlice = mm.PageFrameSlice;
 const ConstPageFrameSlice = mm.ConstPageFrameSlice;
 
-const MAX_ORDER = 12;
+pub const max_order = 12;
+pub const max_order_pages = 1 << (max_order - 1);
 
-var buckets: *[MAX_ORDER]Bucket = undefined;
+var buckets: *[max_order]Bucket = undefined;
 var bitfield: std.PackedIntSlice(u1) = undefined;
 var pages: PageSlice = undefined;
 var max_nodes: usize = undefined;
@@ -75,7 +76,7 @@ const Node = struct {
 
     pub fn index(self: *const Self, order: usize) usize {
         const offset = @intFromPtr(self) - @intFromPtr(pages.ptr);
-        const region_size = @as(usize, 1) << @intCast(MAX_ORDER - order - 1);
+        const region_size = @as(usize, 1) << @intCast(max_order - order - 1);
         const page_index = offset / @sizeOf(Page);
         return (region_size - 1) * max_nodes + (page_index >> @intCast(order));
     }
@@ -110,15 +111,20 @@ const Node = struct {
 
 // TODO: bitfield might overlap with the holes?
 // TODO: there might be a case where max_nodes must be decremented by one?
-pub fn init(heap: PageFrameSlice, initrd: *PageFrameSlice, fdt: *PageFrameSlice) void {
+pub fn init(
+    heap: PageFrameSlice,
+    tix: PageFrameSlice,
+    fdt: PageFrameSlice,
+    out_tix_allocations: *PageSlice,
+    out_fdt_allocations: *PageSlice,
+) void {
     log.info("Initializing page allocator.", .{});
-    const MAX_NODE_PAGES = 1 << (MAX_ORDER - 1);
-    const heap_pages = std.mem.alignBackward(usize, heap.len, MAX_NODE_PAGES);
-    max_nodes = heap_pages / MAX_NODE_PAGES;
+    const heap_pages = std.mem.alignBackward(usize, heap.len, max_order_pages);
+    max_nodes = heap_pages / max_order_pages;
 
-    const buckets_bytes = @sizeOf(Bucket) * MAX_ORDER;
+    const buckets_bytes = @sizeOf(Bucket) * max_order;
     const buckets_bits = buckets_bytes * 8;
-    const bitfield_bits = ((1 << (MAX_ORDER - 1)) - 1) * max_nodes;
+    const bitfield_bits = ((1 << (max_order - 1)) - 1) * max_nodes;
     const metadata_bits = buckets_bits + bitfield_bits;
     const metadata_pages = std.math.divCeil(usize, metadata_bits, @sizeOf(Page) * 8) catch unreachable;
 
@@ -131,31 +137,35 @@ pub fn init(heap: PageFrameSlice, initrd: *PageFrameSlice, fdt: *PageFrameSlice)
     bitfield = std.PackedIntSlice(u1).init(bitfield_bytes, bitfield_bits);
     pages = heap[metadata_pages..];
 
-    const max_order_bucket = &buckets[MAX_ORDER - 1];
+    out_tix_allocations.len = 0;
+    out_fdt_allocations.len = 0;
+
     var start: usize = 0;
-    var end: usize = MAX_NODE_PAGES;
+    var end: usize = max_order_pages;
     while (end <= pages.len) {
         const slice = pages[start..end];
-        if (mm.pageSlicesOverlap(slice, initrd.*)) {
-            log.debug("{*} overlaps with initrd.", .{slice});
-            break;
-        } else if (mm.pageSlicesOverlap(slice, fdt.*)) {
+        if (mm.pageSlicesOverlap(slice, tix)) {
+            log.debug("{*} overlaps with tix.", .{slice});
+            if (out_tix_allocations.len == 0)
+                out_tix_allocations.ptr = slice.ptr;
+            out_tix_allocations.len += max_order_pages;
+        } else if (mm.pageSlicesOverlap(slice, fdt)) {
             log.debug("{*} overlaps with fdt.", .{slice});
-            break;
+            if (out_fdt_allocations.len == 0)
+                out_fdt_allocations.ptr = slice.ptr;
+            out_fdt_allocations.len += max_order_pages;
         } else {
-            const node: *Node = @ptrCast(slice);
-            max_order_bucket.free_list.append(node);
-            max_order_bucket.free_count += 1;
+            free(slice);
         }
         start = end;
-        end += MAX_NODE_PAGES;
+        end += max_order_pages;
     }
 }
 
 pub fn allocate(requested_order: usize) !PageSlice {
     log.debug("Allocating node of order {}.", .{requested_order});
     var order = requested_order;
-    const node: *Node = while (order < MAX_ORDER) : (order += 1) {
+    const node: *Node = while (order < max_order) : (order += 1) {
         if (buckets[order].free_list.pop()) |node|
             break node;
     } else {
@@ -164,7 +174,7 @@ pub fn allocate(requested_order: usize) !PageSlice {
     buckets[order].free_count -= 1;
 
     while (true) {
-        if (order < MAX_ORDER - 1)
+        if (order < max_order - 1)
             _ = node.flip(order);
         if (order == requested_order)
             break;
@@ -186,7 +196,7 @@ pub fn free(slice: PageSlice) void {
     var node: *Node = @ptrCast(slice.ptr);
     log.debug("Freeing node {*} of order {}.", .{ node, order });
 
-    while (order < MAX_ORDER - 1) : (order += 1) {
+    while (order < max_order - 1) : (order += 1) {
         if (node.flip(order))
             break;
         node.buddy(order).remove();

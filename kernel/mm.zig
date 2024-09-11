@@ -129,9 +129,15 @@ pub var kernel_offset: usize = 0;
 const KERNEL_STACK_SIZE_TOTAL = proc.MAX_HARTS * entry.KERNEL_STACK_SIZE_PER_HART;
 export var kernel_stack: [KERNEL_STACK_SIZE_TOTAL]u8 linksection(".bss") = undefined;
 
-pub fn init(heap: PageFrameSlice, initrd: *PageFrameSlice, fdt: *PageFrameSlice) void {
+pub fn init(
+    heap: PageFrameSlice,
+    tix: PageFrameSlice,
+    fdt: PageFrameSlice,
+    out_tix_allocations: *PageSlice,
+    out_fdt_allocations: *PageSlice,
+) void {
     log.info("Initializing memory subsystem.", .{});
-    page_allocator.init(heap, initrd, fdt);
+    page_allocator.init(heap, tix, fdt, out_tix_allocations, out_fdt_allocations);
     Region.init();
 }
 
