@@ -21,6 +21,7 @@ const ConstPageSlice = mm.ConstPageSlice;
 const ConstPageFramePtr = mm.ConstPageFramePtr;
 const PageFrameSlice = mm.PageFrameSlice;
 const ConstPageFrameSlice = mm.ConstPageSlice;
+const PhysicalPageNumber = mm.PhysicalPageNumber;
 const Process = proc.Process;
 const tix = libt.tix;
 
@@ -151,10 +152,13 @@ export fn bootHartMain(boot_hart_id: usize, fdt_physical_start: PhysicalAddress,
         end += mm.page_allocator.max_order_pages;
     }
 
-    const satp = (8 << 60) | @intFromPtr(init_process.page_table) >> 12;
+    const satp: riscv.satp.Type = .{
+        .ppn = @bitCast(PhysicalPageNumber.fromPageTable(init_process.page_table)),
+        .asid = 0,
+        .mode = .sv39,
+    };
     mm.logical_offset = mm.logical_start -% heap_physical_start;
     mm.kernel_offset = mm.kernel_start -% kernel_physical_start;
-    log.debug("satp: {x}", .{satp});
     trampoline(satp, 0, mm.kernel_offset);
 }
 
@@ -166,7 +170,7 @@ export fn secondaryHartMain(hart_id: usize) noreturn {
         asm volatile ("wfi");
     }
 }
-extern fn trampoline(satp: usize, hart_index: usize, kernel_offset: usize) align(@sizeOf(Page)) noreturn;
+extern fn trampoline(satp: riscv.satp.Type, hart_index: usize, kernel_offset: usize) align(@sizeOf(Page)) noreturn;
 
 export fn main() noreturn {
     writer.writeFn = writeFn;

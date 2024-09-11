@@ -140,6 +140,7 @@ fn Csr(comptime name: []const u8, comptime T: type) type {
     return struct {
         pub usingnamespace if (@typeInfo(T) == .Struct) T else struct {};
         pub const Field = meta.FieldEnum(T);
+        pub const Type = T;
 
         pub inline fn read() T {
             var value: usize = undefined;
