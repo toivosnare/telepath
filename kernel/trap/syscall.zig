@@ -75,7 +75,7 @@ pub fn spawn(process: *Process) SpawnError!usize {
     log.debug("Process with ID {d} is spawning with {d} regions and {d} arguments.", .{ process.id, region_amount, argument_amount });
 
     for (region_descriptions) |region_description| {
-        const region = try Region.fromIndex(region_description.region_index);
+        const region = try Region.fromIndex(region_description.region);
         if (region.isFree())
             return error.InvalidParameter;
 
@@ -95,14 +95,14 @@ pub fn spawn(process: *Process) SpawnError!usize {
     child_process.parent = process;
 
     for (region_descriptions) |region_description| {
-        const region = Region.fromIndex(region_description.region_index) catch unreachable;
+        const region = Region.fromIndex(region_description.region) catch unreachable;
         const region_entry = try child_process.receiveRegion(region, .{
             .readable = region_description.readable,
             .writable = region_description.writable,
             .executable = region_description.executable,
         });
-        if (region_description.start_address != 0)
-            _ = try child_process.mapRegionEntry(region_entry, region_description.start_address);
+        if (region_description.start_address != null)
+            _ = try child_process.mapRegionEntry(region_entry, @intFromPtr(region_description.start_address));
     }
 
     child_process.context.register_file.a0 = argument_amount;

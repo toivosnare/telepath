@@ -1,3 +1,6 @@
+const std = @import("std");
+const page_size = std.mem.page_size;
+
 pub const Id = enum(usize) {
     exit = 0,
     identify = 1,
@@ -63,8 +66,8 @@ pub const SpawnError = error{ InvalidParameter, NoPermission, OutOfMemory, Reser
 pub fn spawn(
     region_descriptions: []const RegionDescription,
     arguments: []const usize,
-    instruction_pointer: usize,
-    stack_pointer: usize,
+    instruction_pointer: *anyopaque,
+    stack_pointer: *anyopaque,
 ) SpawnError!usize {
     return unpackResult(SpawnError, syscall6(
         .spawn,
@@ -72,8 +75,8 @@ pub fn spawn(
         @intFromPtr(region_descriptions.ptr),
         arguments.len,
         @intFromPtr(arguments.ptr),
-        instruction_pointer,
-        stack_pointer,
+        @intFromPtr(instruction_pointer),
+        @intFromPtr(stack_pointer),
     ));
 }
 
@@ -83,13 +86,16 @@ pub fn kill(pid: usize) KillError!void {
 }
 
 pub const AllocateError = error{ OutOfMemory, InvalidParameter };
-pub fn allocate(size: usize, permissions: Permissions, physical_address: usize) AllocateError!usize {
-    return unpackResult(AllocateError, syscall3(.allocate, size, @bitCast(permissions), physical_address));
+pub fn allocate(size: usize, permissions: Permissions, physical_address: ?[*]align(page_size) [page_size]u8) AllocateError!usize {
+    return unpackResult(AllocateError, syscall3(.allocate, size, @bitCast(permissions), @intFromPtr(physical_address)));
 }
 
 pub const MapError = error{ InvalidParameter, Reserved, NoPermission, Exists };
-pub fn map(region: usize, virtual_address: usize) MapError!usize {
-    return unpackResult(MapError, syscall2(.map, region, virtual_address));
+pub fn map(region: usize, virtual_address: ?[*]align(page_size) [page_size]u8) MapError![*]align(page_size) [page_size]u8 {
+    return if (unpackResult(MapError, syscall2(.map, region, @intFromPtr(virtual_address)))) |addr|
+        @ptrFromInt(addr)
+    else |err|
+        err;
 }
 
 pub const ShareError = error{ InvalidParameter, NoPermission, OutOfMemory };
@@ -103,8 +109,8 @@ pub fn refcount(region: usize) RefcountError!usize {
 }
 
 pub const UnmapError = error{ InvalidParameter, Exists };
-pub fn unmap(address: usize) UnmapError!usize {
-    return unpackResult(UnmapError, syscall1(.unmap, address));
+pub fn unmap(address: [*]align(page_size) [page_size]u8) UnmapError!usize {
+    return unpackResult(UnmapError, syscall1(.unmap, @intFromPtr(address)));
 }
 
 pub const FreeError = error{ InvalidParameter, NoPermission, Exists };
@@ -113,8 +119,8 @@ pub fn free(region: usize) FreeError!void {
 }
 
 pub const RegionDescription = packed struct {
-    region_index: u16,
-    start_address: usize,
+    region: usize,
+    start_address: ?[*]align(page_size) [page_size]u8,
     readable: bool,
     writable: bool,
     executable: bool,

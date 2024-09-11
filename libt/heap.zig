@@ -19,16 +19,16 @@ const PageAllocator = struct {
 
     fn alloc(_: *anyopaque, n: usize, _: u8, _: usize) ?[*]u8 {
         const pages = math.divCeil(usize, n, mem.page_size) catch unreachable;
-        const region = syscall.allocate(pages, .{ .readable = true, .writable = true }, 0) catch return null;
-        const result = syscall.map(region, 0) catch {
+        const region = syscall.allocate(pages, .{ .readable = true, .writable = true }, null) catch return null;
+        const result = syscall.map(region, null) catch {
             syscall.free(region) catch unreachable;
             return null;
         };
-        return @ptrFromInt(result);
+        return @ptrCast(result);
     }
 
     fn free(_: *anyopaque, slice: []u8, _: u8, _: usize) void {
-        const region = syscall.unmap(@intFromPtr(slice.ptr)) catch unreachable;
+        const region = syscall.unmap(@alignCast(@ptrCast(slice.ptr))) catch unreachable;
         syscall.free(region) catch unreachable;
     }
 };
