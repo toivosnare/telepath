@@ -7,6 +7,7 @@ const math = std.math;
 const mem = std.mem;
 const libt = @import("libt");
 const syscall = libt.syscall;
+const service = libt.service;
 
 pub const os = libt;
 
@@ -85,6 +86,9 @@ fn populateDriverMap(driver_map: *DriverMap) !void {
     }
 }
 
+const Regions = std.BoundedArray(syscall.RegionDescription, 8);
+const Arguments = std.BoundedArray(usize, 7);
+
 fn loadElf(elf_bytes: []const u8) !usize {
     var stream = io.fixedBufferStream(elf_bytes);
     const header = try elf.Header.read(&stream);
@@ -93,56 +97,83 @@ fn loadElf(elf_bytes: []const u8) !usize {
     if (!header.is_64)
         return error.InvalidExecutable;
 
-    var regions = std.BoundedArray(syscall.RegionDescription, 8).init(0) catch unreachable;
-    var arguments: [7]usize = undefined;
+    var regions = Regions.init(0) catch unreachable;
+    var arguments = Arguments.init(0) catch unreachable;
 
     var it = header.program_header_iterator(&stream);
     while (try it.next()) |program_header| {
-        if (program_header.p_type != elf.PT_LOAD)
-            continue;
-
-        const start_address = mem.alignBackward(usize, program_header.p_vaddr, mem.page_size);
-        const end_address = mem.alignForward(usize, program_header.p_vaddr + program_header.p_memsz, mem.page_size);
-        const pages = (end_address - start_address) / mem.page_size;
-        const region = try syscall.allocate(pages, .{ .readable = true, .writable = true, .executable = true }, 0);
-        const address = try syscall.map(region, 0);
-
-        var rd: *syscall.RegionDescription = try regions.addOne();
-        rd.region_index = @intCast(region);
-        rd.start_address = start_address;
-        rd.readable = program_header.p_flags & elf.PF_R != 0;
-        rd.writable = program_header.p_flags & elf.PF_W != 0;
-        rd.executable = program_header.p_flags & elf.PF_X != 0;
-
-        const page_offset = program_header.p_vaddr % mem.page_size;
-        const dest: [*]u8 = @ptrFromInt(address + page_offset);
-        const source = elf_bytes[program_header.p_offset..][0..program_header.p_filesz];
-        @memcpy(dest, source);
-
-        _ = syscall.unmap(address) catch unreachable;
+        if (program_header.p_type == elf.PT_LOAD) {
+            try handleLoadSegment(program_header, &regions, elf_bytes);
+        } else if (program_header.p_type >= elf.PT_LOOS and program_header.p_type <= elf.PT_HIOS) {
+            try handleServiceSegment(program_header, &regions, &arguments);
+        }
     }
 
     // Allocate a stack for the process.
-    const region = try syscall.allocate(stack_size, .{ .readable = true, .writable = true }, 0);
+    const region = try syscall.allocate(stack_size, .{ .readable = true, .writable = true }, null);
     var rd: *syscall.RegionDescription = try regions.addOne();
-    rd.region_index = @intCast(region);
-    rd.start_address = libt.address_space_end - stack_size * mem.page_size;
+    rd.region = region;
+    rd.start_address = @ptrFromInt(libt.address_space_end - stack_size * mem.page_size);
     rd.readable = true;
     rd.writable = true;
     rd.executable = false;
 
-    // Test sending a message over shared memory region.
-    const shared_region = try syscall.allocate(1, .{ .readable = true, .writable = true }, 0);
-    rd = try regions.addOne();
-    rd.region_index = @intCast(shared_region);
-    rd.start_address = 0;
-    rd.readable = true;
-    rd.writable = false;
-    rd.executable = false;
+    return syscall.spawn(regions.constSlice(), arguments.constSlice(), @ptrFromInt(header.entry), @ptrFromInt(libt.address_space_end));
+}
 
-    const addr: [*]u8 = @ptrFromInt(try syscall.map(shared_region, 0));
-    @memcpy(addr, "Hello from init!\n");
-    arguments[0] = shared_region;
+fn handleLoadSegment(header: elf.Elf64_Phdr, regions: *Regions, elf_bytes: []const u8) !void {
+    const start_address = mem.alignBackward(usize, header.p_vaddr, mem.page_size);
+    const end_address = mem.alignForward(usize, header.p_vaddr + header.p_memsz, mem.page_size);
+    const size = (end_address - start_address) / mem.page_size;
+    const region = try syscall.allocate(size, .{ .readable = true, .writable = true, .executable = true }, null);
+    const address = try syscall.map(region, null);
 
-    return syscall.spawn(regions.constSlice(), (&arguments)[0..1], header.entry, libt.address_space_end);
+    var rd: *syscall.RegionDescription = try regions.addOne();
+    rd.region = region;
+    rd.start_address = @ptrFromInt(start_address);
+    rd.readable = header.p_flags & elf.PF_R != 0;
+    rd.writable = header.p_flags & elf.PF_W != 0;
+    rd.executable = header.p_flags & elf.PF_X != 0;
+
+    const page_offset = header.p_vaddr % mem.page_size;
+    const dest: [*]u8 = @as([*]u8, @ptrCast(address)) + page_offset;
+    const source = elf_bytes[header.p_offset..][0..header.p_filesz];
+    @memcpy(dest, source);
+
+    _ = syscall.unmap(address) catch unreachable;
+}
+
+fn handleServiceSegment(header: elf.Elf64_Phdr, regions: *Regions, arguments: *Arguments) !void {
+    const start_address = mem.alignBackward(usize, header.p_vaddr, mem.page_size);
+    const end_address = mem.alignForward(usize, header.p_vaddr + header.p_memsz, mem.page_size);
+    const size = (end_address - start_address) / mem.page_size;
+
+    const region = try if (header.p_flags & service.PF_P != 0)
+        handleProvidedServiceSegment(size, header.p_type)
+    else
+        handleRequiredServiceSegment();
+
+    var rd: *syscall.RegionDescription = try regions.addOne();
+    rd.region = region;
+    rd.start_address = @ptrFromInt(start_address);
+    rd.readable = header.p_flags & elf.PF_R != 0;
+    rd.writable = header.p_flags & elf.PF_W != 0;
+    rd.executable = header.p_flags & elf.PF_X != 0;
+    try arguments.append(region);
+}
+
+fn handleProvidedServiceSegment(size: usize, id: usize) !usize {
+    const region = try syscall.allocate(size, .{ .readable = true, .writable = true, .executable = true }, null);
+
+    if (id == service.hash(service.Test)) {
+        const test_service: *align(mem.page_size) service.Test = @ptrCast(try syscall.map(region, null));
+        test_service.puts("Hello from init!\n");
+        _ = try syscall.unmap(@ptrCast(test_service));
+    }
+
+    return region;
+}
+
+fn handleRequiredServiceSegment() !usize {
+    return error.NotImplemented;
 }

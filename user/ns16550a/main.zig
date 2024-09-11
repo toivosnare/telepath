@@ -146,15 +146,15 @@ const Ns16550A = packed struct {
 };
 
 pub fn main(args: []usize) noreturn {
+    _ = args;
+
     const physical_address = 0x10000000;
-    const region = syscall.allocate(1, .{ .readable = true, .writable = true }, physical_address) catch unreachable;
-    const ns16550a: *volatile Ns16550A = @ptrFromInt(syscall.map(region, 0) catch unreachable);
+    const region = syscall.allocate(1, .{ .readable = true, .writable = true }, @ptrFromInt(physical_address)) catch unreachable;
+    const ns16550a: *volatile Ns16550A = @ptrCast(syscall.map(region, null) catch unreachable);
     ns16550a.init();
 
-    if (args.len > 0) {
-        var c: [*]const u8 = @ptrFromInt(syscall.map(args[0], 0) catch unreachable);
-        while (c[0] != 0) : (c += 1)
-            ns16550a.putc(c[0]);
-    }
+    const service = @import("services").@"test";
+    const string = (&service.buffer)[0..service.write_ptr];
+    ns16550a.puts(string);
     while (true) {}
 }

@@ -1,21 +1,19 @@
 const std = @import("std");
+const libt = @import("libt");
+const service = libt.service;
 
 pub fn build(b: *std.Build) void {
     const target = b.resolveTargetQuery(.{ .cpu_arch = .riscv64, .os_tag = .freestanding, .abi = .none });
     const optimize = b.standardOptimizeOption(.{});
 
-    const libt = b.dependency("libt", .{
-        .target = target,
-        .optimize = optimize,
-        .include_entry_point = true,
-    });
-
-    const exe = b.addExecutable(.{
+    const exe = libt.addTelepathExecutable(b, .{
         .name = "ns16550a",
         .root_source_file = b.path("main.zig"),
         .target = target,
         .optimize = optimize,
+    }, &[_]service.Options{
+        .{ .T = service.Test, .name = "test", .flags = .{ .provide = true, .read = true } },
     });
-    exe.root_module.addImport("libt", libt.module("libt"));
+
     b.installArtifact(exe);
 }
