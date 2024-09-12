@@ -21,12 +21,12 @@ secondaryHartEntry:
 .global trampoline
 .align 12
 trampoline:
-	csrw satp, a0
+	csrw satp, a1
 	sfence.vma
 	la sp, kernel_stack
 	li t0, KERNEL_STACK_SIZE_PER_HART
-	addi a1, a1, 1
-	mul t0, t0, a1
+	addi t1, a0, 1
+	mul t0, t0, t1
 	add sp, sp, t0
 	add sp, sp, a2
 	la ra, main
@@ -34,10 +34,10 @@ trampoline:
 	jr ra
 
 .global handleTrap
-.global returnToUserspace
 .align 2
 handleTrap:
 	csrrw a0, sscratch, a0
+	beqz a0, handleTrap2
 	sd ra, 8(a0)
 	sd sp, 16(a0)
 	sd gp, 24(a0)
@@ -74,11 +74,13 @@ handleTrap:
 	sd t0, 80(a0)
 	la sp, kernel_stack
 	li t0, KERNEL_STACK_SIZE_PER_HART
-	ld t1, 256(a0)
-	addi t1, t1, 1
+	ld a1, 256(a0)
+	addi t1, a1, 1
 	mul t0, t0, t1
 	add sp, sp, t0
-	call handleTrap2
+	j handleTrap2
+
+.global returnToUserspace
 returnToUserspace:
 	csrw sscratch, a0
 	ld t0, 0(a0)

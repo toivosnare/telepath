@@ -52,13 +52,14 @@ pub const PageTable = struct {
     pub const Index = u9;
     pub const Ptr = *align(@sizeOf(Page)) PageTable;
 
-    pub fn mapRange(self: Ptr, virtual: ConstPageSlice, physical: ConstPageFrameSlice, permissions: Entry.Permissions) void {
+    pub fn mapRange(self: Ptr, virtual: ConstPageSlice, physical: ConstPageFrameSlice, permissions: Entry.Permissions) !void {
+        errdefer self.unmapRange(virtual);
         for (virtual, physical) |*v, *p|
-            self.map(v, p, permissions);
+            try self.map(v, p, permissions);
     }
 
-    pub fn map(self: Ptr, virtual: ConstPagePtr, physical: ConstPageFramePtr, permissions: Entry.Permissions) void {
-        const pte: *Entry = self.walk(virtual);
+    pub fn map(self: Ptr, virtual: ConstPagePtr, physical: ConstPageFramePtr, permissions: Entry.Permissions) !void {
+        const pte: *Entry = try self.walk(virtual, true);
         pte.physical_page_number = PhysicalPageNumber.fromPageFrame(physical);
         pte.permissions = permissions;
     }
@@ -69,11 +70,19 @@ pub const PageTable = struct {
     }
 
     pub fn unmap(self: Ptr, virtual: ConstPagePtr) void {
-        const pte: *Entry = self.walk(virtual);
+        const pte: *Entry = self.walk(virtual, false) catch return;
         pte.permissions = .{};
     }
 
-    pub fn walk(self: Ptr, virtual: ConstPagePtr) *Entry {
+    pub fn translate(self: Ptr, virtual: VirtualAddress) !PhysicalAddress {
+        const page: ConstPagePtr = @ptrFromInt(mem.alignBackward(VirtualAddress, virtual, @sizeOf(Page)));
+        const pte = try self.walk(page, false);
+        const page_frame = pte.physical_page_number.toPageFrame();
+        const page_offset = virtual % @sizeOf(Page);
+        return @intFromPtr(page_frame) + page_offset;
+    }
+
+    pub fn walk(self: Ptr, virtual: ConstPagePtr, allocate: bool) !*Entry {
         var page_table: Ptr = self;
         var level: Level = 2;
         while (level > 0) : (level -= 1) {
@@ -81,11 +90,13 @@ pub const PageTable = struct {
             const pte: *Entry = &page_table.entries[pte_index];
             if (pte.permissions.valid) {
                 page_table = pte.physical_page_number.toPageTable();
-            } else {
-                page_table = @ptrCast(page_allocator.allocate(0) catch @panic("OOM"));
+            } else if (allocate) {
+                page_table = @ptrCast(try page_allocator.allocate(0));
                 @memset(mem.asBytes(page_table), 0);
                 pte.physical_page_number = PhysicalPageNumber.fromPageTable(page_table);
                 pte.permissions = .{ .valid = true };
+            } else {
+                return error.NotMapped;
             }
         }
         const leaf_index = PageTable.index(virtual, 0);
@@ -114,6 +125,10 @@ pub const PhysicalPageNumber = packed struct(u44) {
 
     pub fn toPageTable(self: PhysicalPageNumber) PageTable.Ptr {
         return @ptrFromInt(logicalFromPhysical(@as(PhysicalAddress, self.ppn) << 12));
+    }
+
+    pub fn toPageFrame(self: PhysicalPageNumber) PageFramePtr {
+        return @ptrFromInt(@as(PhysicalAddress, self.ppn) << 12);
     }
 };
 

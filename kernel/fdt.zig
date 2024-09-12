@@ -90,8 +90,8 @@ pub fn parse(fdt_physical_start: PhysicalAddress) ParseResult {
                     .hart => {
                         if (mem.eql(u8, p.name, "reg")) {
                             const hart_id = mem.bigToNative(u32, @as(*const u32, @ptrCast(@alignCast(p.value))).*);
-                            if (hart_id != proc.hart_id_array[0]) {
-                                proc.hart_id_array[hart_count] = hart_id;
+                            if (hart_id != proc.hart_array[0].id) {
+                                proc.hart_array[hart_count].id = hart_id;
                                 hart_count += 1;
                             }
                         }
@@ -124,7 +124,7 @@ pub fn parse(fdt_physical_start: PhysicalAddress) ParseResult {
     } else if (clint_size == null) {
         @panic("CLINT size was not found in the device tree.");
     }
-    proc.hart_ids = proc.hart_id_array[0..hart_count];
+    proc.harts = proc.hart_array[0..hart_count];
     return .{
         .fdt_size = @intCast(traverser.header.totalsize),
         .fdt_physical_end = 0,

@@ -4,6 +4,7 @@ const math = std.math;
 const mem = std.mem;
 const mm = @import("mm.zig");
 const riscv = @import("riscv.zig");
+const sbi = @import("sbi");
 const PhysicalPageNumber = mm.PhysicalPageNumber;
 const PageTable = mm.PageTable;
 
@@ -15,31 +16,43 @@ pub var queue_head: ?*Process = null;
 pub var queue_tail: ?*Process = null;
 
 pub const MAX_HARTS = 8;
-pub const HartId = usize;
-pub const HartIndex = usize;
-pub var hart_id_array: [MAX_HARTS]HartId = undefined;
-pub var hart_ids: []HartId = undefined;
+pub var hart_array: [MAX_HARTS]Hart = undefined;
+pub var harts: []Hart = undefined;
+
+pub const Hart = extern struct {
+    id: Id,
+    pub const Id = usize;
+    pub const Index = usize;
+};
 
 pub const quantum_ns: usize = 1_000_000;
 
-pub fn init() void {
+var next_pid: Process.Id = 2;
+
+pub fn init() *Process {
     log.info("Initializing process subsystem.", .{});
-    for (1.., &table) |pid, *p| {
-        p.id = pid;
+    for (&table) |*p| {
+        p.id = 0;
         p.parent = null;
         p.children = Process.Children.init(0) catch unreachable;
-        p.state = .invalid;
         for (&p.region_entries) |*re| {
             re.region = null;
         }
         p.region_entries_head = null;
+        p.wait_address = 0;
         p.prev = null;
         p.next = null;
     }
+
+    const init_process = &table[0];
+    init_process.id = 1;
+    init_process.page_table = @ptrCast(mm.page_allocator.allocate(0) catch @panic("OOM"));
+    @memset(mem.asBytes(init_process.page_table), 0);
+    return init_process;
 }
 
-pub fn onAddressTranslationEnabled() *Process {
-    hart_ids.ptr = mm.kernelVirtualFromPhysical(hart_ids.ptr);
+pub fn onAddressTranslationEnabled() void {
+    harts.ptr = mm.kernelVirtualFromPhysical(harts.ptr);
     const init_process = &table[0];
     init_process.page_table = mm.logicalFromPhysical(init_process.page_table);
     init_process.region_entries_head = mm.kernelVirtualFromPhysical(init_process.region_entries_head.?);
@@ -52,33 +65,78 @@ pub fn onAddressTranslationEnabled() *Process {
         if (re.next != null)
             re.next = mm.kernelVirtualFromPhysical(re.next.?);
     }
-    return init_process;
+    riscv.sstatus.clear(.spp);
+    enqueue(init_process);
 }
-
-var joo: bool = false;
 
 pub fn allocate() !*Process {
     for (&table) |*p| {
-        if (p.state == .invalid) {
+        if (p.id == 0) {
+            p.id = next_pid;
+            next_pid += 1;
+
             p.page_table = @ptrCast(try mm.page_allocator.allocate(0));
             @memset(mem.asBytes(p.page_table), 0);
-            // TODO: map logical mapping and kernel.
-            if (joo) {
-                const logical_index = PageTable.index(@ptrFromInt(mm.logical_start), 2);
-                const first_level_entry_count = math.divCeil(usize, mm.logical_size, PageTable.entry_count * PageTable.entry_count) catch unreachable;
-                @memcpy(p.page_table.entries[logical_index..].ptr, table[0].page_table.entries[logical_index..][0..first_level_entry_count]);
 
-                const kernel_index = PageTable.index(@ptrFromInt(mm.kernel_start), 2);
-                @memcpy(p.page_table.entries[kernel_index..].ptr, table[0].page_table.entries[kernel_index..][0..1]);
-            } else {
-                joo = true;
-            }
+            const logical_index = PageTable.index(@ptrFromInt(mm.logical_start), 2);
+            const first_level_entry_count = math.divCeil(usize, mm.logical_size, PageTable.entry_count * PageTable.entry_count) catch unreachable;
+            @memcpy(p.page_table.entries[logical_index..].ptr, table[0].page_table.entries[logical_index..][0..first_level_entry_count]);
 
-            p.state = .waiting;
+            const kernel_index = PageTable.index(@ptrFromInt(mm.kernel_start), 2);
+            @memcpy(p.page_table.entries[kernel_index..].ptr, table[0].page_table.entries[kernel_index..][0..1]);
+
+            enqueue(p);
+
             return p;
         }
     }
     return error.OutOfMemory;
+}
+
+pub fn scheduleNext(current_process: ?*Process, hart_index: Hart.Index) noreturn {
+    var next_process: *Process = undefined;
+
+    if (queue_head) |next| {
+        dequeue(next);
+        if (current_process) |cur|
+            enqueue(cur);
+        riscv.satp.write(.{
+            .ppn = @bitCast(PhysicalPageNumber.fromPageTable(next.page_table)),
+            .asid = 0,
+            .mode = .sv39,
+        });
+        riscv.@"sfence.vma"(null, null);
+        next.context.hart_index = hart_index;
+        next_process = next;
+    } else if (current_process != null) {
+        next_process = current_process.?;
+    } else {
+        idle(hart_index);
+    }
+
+    sbi.time.setTimer(riscv.time.read() + 10 * quantum_ns);
+    returnToUserspace(&next_process.context);
+}
+
+pub fn scheduleCurrent(current_process: *Process) noreturn {
+    returnToUserspace(&current_process.context);
+}
+
+extern fn returnToUserspace(context: *Process.Context) noreturn;
+
+fn idle(hart_index: Hart.Index) noreturn {
+    // TODO: interrupts? Other harts should send IPI to wake up.
+    asm volatile (
+        \\ csrw sscratch, %[sscratch]
+        \\ mv a1, %[hart_index]
+        \\1:
+        \\ wfi
+        \\ j 1b
+        :
+        : [sscratch] "r" (0),
+          [hart_index] "r" (hart_index),
+    );
+    unreachable;
 }
 
 pub fn enqueue(process: *Process) void {
@@ -91,7 +149,6 @@ pub fn enqueue(process: *Process) void {
         queue_head = process;
     }
     queue_tail = process;
-    process.state = .ready;
 }
 
 pub fn dequeue(process: *Process) void {
@@ -110,21 +167,9 @@ pub fn dequeue(process: *Process) void {
     process.next = null;
 }
 
-pub fn contextSwitch(process: *Process) void {
-    log.debug("Switching context to process with ID {d}.", .{process.id});
-    process.state = .running;
-    // process.context.hart_index = hart_index;
-    riscv.satp.write(.{
-        .ppn = @bitCast(PhysicalPageNumber.fromPageTable(process.page_table)),
-        .asid = 0,
-        .mode = .sv39,
-    });
-    riscv.@"sfence.vma"(null, null);
-}
-
 pub fn processFromId(id: Process.Id) ?*Process {
     for (&table) |*process| {
-        if (process.state != .invalid and process.id == id)
+        if (process.id == id)
             return process;
     }
     return null;

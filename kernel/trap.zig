@@ -2,11 +2,11 @@ const std = @import("std");
 const log = std.log;
 const meta = std.meta;
 const math = std.math;
+const assert = std.debug.assert;
 const mm = @import("mm.zig");
 const riscv = @import("riscv.zig");
 const proc = @import("proc.zig");
 const libt = @import("libt");
-const sbi = @import("sbi");
 const syscall = @import("trap/syscall.zig");
 const Process = proc.Process;
 
@@ -36,63 +36,52 @@ pub fn onAddressTranslationEnabled() void {
 
 extern fn handleTrap() align(4) callconv(.Naked) noreturn;
 
-export fn handleTrap2(context: *Process.Context) *Process.Context {
-    const current_process = context.process();
+export fn handleTrap2(context: ?*Process.Context, hart_index: proc.Hart.Index) noreturn {
+    const current_process = if (context) |c| c.process() else null;
     const scause = riscv.scause.read();
-    const next_process = if (scause.interrupt)
-        handleInterrupt(scause.code.interrupt, current_process)
-    else
-        handleException(scause.code.exception, current_process);
-    return &next_process.context;
-}
 
-fn handleInterrupt(code: riscv.scause.InterruptCode, current_process: *Process) *Process {
-    log.debug("Interrupt: code={s}", .{@tagName(code)});
-    return switch (code) {
-        .supervisor_timer_interrupt => handleTimerInterrupt(current_process),
-        else => @panic("unhandled interrupt"),
-    };
-}
-
-fn handleTimerInterrupt(current_process: *Process) *Process {
-    if (proc.queue_head) |next_process| {
-        proc.enqueue(current_process);
-        proc.dequeue(next_process);
-        proc.contextSwitch(next_process);
-        sbi.time.setTimer(riscv.time.read() + 10 * proc.quantum_ns);
-        return next_process;
+    if (scause.interrupt) {
+        handleInterrupt(scause.code.interrupt, current_process, hart_index);
     } else {
-        sbi.time.setTimer(riscv.time.read() + 10 * proc.quantum_ns);
-        return current_process;
+        handleException(scause.code.exception, current_process);
     }
 }
 
-fn handleException(code: riscv.scause.ExceptionCode, current_process: *Process) *Process {
+fn handleInterrupt(code: riscv.scause.InterruptCode, current_process: ?*Process, hart_index: proc.Hart.Index) noreturn {
+    log.debug("Interrupt: code={s}", .{@tagName(code)});
+    switch (code) {
+        .supervisor_timer_interrupt => proc.scheduleNext(current_process, hart_index),
+        else => @panic("unhandled interrupt"),
+    }
+}
+
+fn handleException(code: riscv.scause.ExceptionCode, current_process: ?*Process) noreturn {
+    if (current_process == null)
+        @panic("exception from idle");
+
     const stval = riscv.stval.read();
     log.debug("Exception: code={s}, stval={x}", .{ @tagName(code), stval });
-    return switch (code) {
-        .environment_call_from_u_mode => handleSyscall(current_process),
+
+    switch (code) {
+        .environment_call_from_u_mode => handleSyscall(current_process.?),
         .instruction_page_fault,
         .load_page_fault,
         .store_amo_page_fault,
-        => current_process.handlePageFault(stval),
+        => current_process.?.handlePageFault(stval),
         else => @panic("unhandled exception"),
-    };
+    }
 }
 
-fn handleSyscall(current_process: *Process) *Process {
-    current_process.context.register_file.pc += 4;
-    const syscall_id_int = current_process.context.register_file.a0;
+fn handleSyscall(current_process: *Process) noreturn {
+    current_process.context.pc += 4;
+    const syscall_id_int = current_process.context.a0;
     const syscall_id = meta.intToEnum(libt.syscall.Id, syscall_id_int) catch {
         log.warn("Invalid syscall ID {d}", .{syscall_id_int});
-        current_process.context.register_file.a0 = libt.syscall.packResult(error.InvalidParameter);
-        return current_process;
+        current_process.context.a0 = libt.syscall.packResult(error.InvalidParameter);
+        proc.scheduleCurrent(current_process);
     };
-    if (syscall_id == .exit) {
-        return syscall.exit(current_process);
-    }
     const result = switch (syscall_id) {
-        .exit => unreachable,
+        .exit => syscall.exit(current_process),
         .identify => syscall.identify(current_process),
         .fork => syscall.fork(current_process),
         .spawn => syscall.spawn(current_process),
@@ -105,6 +94,6 @@ fn handleSyscall(current_process: *Process) *Process {
         .free => syscall.free(current_process),
         else => @panic("unhandled syscall"),
     };
-    current_process.context.register_file.a0 = libt.syscall.packResult(result);
-    return current_process;
+    current_process.context.a0 = libt.syscall.packResult(result);
+    proc.scheduleCurrent(current_process);
 }

@@ -23,6 +23,7 @@ const PageFrameSlice = mm.PageFrameSlice;
 const ConstPageFrameSlice = mm.ConstPageSlice;
 const PhysicalPageNumber = mm.PhysicalPageNumber;
 const Process = proc.Process;
+const Hart = proc.Hart;
 const tix = libt.tix;
 
 pub const std_options: std.Options = .{
@@ -33,18 +34,18 @@ pub const std_options: std.Options = .{
 extern const kernel_linker_start: anyopaque;
 extern const kernel_linker_end: anyopaque;
 
-export fn bootHartMain(boot_hart_id: usize, fdt_physical_start: PhysicalAddress, kernel_physical_start: PhysicalAddress) noreturn {
+export fn bootHartMain(boot_hart_id: Hart.Id, fdt_physical_start: PhysicalAddress, kernel_physical_start: PhysicalAddress) noreturn {
     trap.init();
     log.info("Boot hart with id {} booting..", .{boot_hart_id});
     log.debug("fdt_physical_start={x}", .{fdt_physical_start});
     log.debug("kernel_physical_start={x}", .{kernel_physical_start});
 
-    proc.hart_id_array[0] = boot_hart_id;
+    proc.hart_array[0].id = boot_hart_id;
     const pr = fdt.parse(fdt_physical_start);
-    log.debug("harts: {any}", .{proc.hart_ids});
+    log.debug("harts: {any}", .{proc.harts});
     log.debug("fdt: {any}", .{pr});
-    for (proc.hart_ids[1..], 2..) |secondary_hart_id, i|
-        sbi.hsm.hartStart(secondary_hart_id, @intFromPtr(&secondaryHartEntry), i) catch @panic("hartStart");
+    for (proc.harts[1..], 2..) |*secondary_hart, i|
+        sbi.hsm.hartStart(secondary_hart.id, @intFromPtr(&secondaryHartEntry), i) catch @panic("hartStart");
 
     mm.ram_physical_slice.ptr = @ptrFromInt(mem.alignBackward(PhysicalAddress, pr.ram_physical_start, @sizeOf(Page)));
     mm.ram_physical_slice.len = math.divCeil(usize, pr.ram_size, @sizeOf(Page)) catch unreachable;
@@ -84,20 +85,18 @@ export fn bootHartMain(boot_hart_id: usize, fdt_physical_start: PhysicalAddress,
     var tix_allocations: PageSlice = undefined;
     var fdt_allocations: PageSlice = undefined;
     mm.init(heap_physical_slice, tix_physical_slice, fdt_physical_slice, &tix_allocations, &fdt_allocations);
-    proc.init();
 
-    const init_process = proc.allocate() catch @panic("OOM");
-    init_process.context.hart_index = 0;
-
+    const init_process = proc.init();
     const trampoline_page: ConstPageFramePtr = @ptrCast(&trampoline);
-    init_process.page_table.map(trampoline_page, trampoline_page, .{ .valid = true, .readable = true, .executable = true });
-    init_process.page_table.mapRange(logical_slice, heap_physical_slice, .{ .valid = true, .readable = true, .writable = true, .global = true });
-    init_process.page_table.mapRange(kernel_slice, kernel_physical_slice, .{ .valid = true, .readable = true, .writable = true, .executable = true, .global = true });
+    init_process.page_table.map(trampoline_page, trampoline_page, .{ .valid = true, .readable = true, .executable = true }) catch @panic("OOM");
+    init_process.page_table.mapRange(logical_slice, heap_physical_slice, .{ .valid = true, .readable = true, .writable = true, .global = true }) catch @panic("OOM");
+    // TODO: Map different parts of the kernel with different permissions.
+    init_process.page_table.mapRange(kernel_slice, kernel_physical_slice, .{ .valid = true, .readable = true, .writable = true, .executable = true, .global = true }) catch @panic("OOM");
 
     const tix_header: *tix.Header = @ptrFromInt(pr.initrd_physical_start);
     if (!mem.eql(u8, &tix_header.magic, &tix.Header.MAGIC))
         @panic("Invalid TIX magic.");
-    init_process.context.register_file.pc = tix_header.entry_point;
+    init_process.context.pc = tix_header.entry_point;
 
     var region_headers: []tix.RegionHeader = undefined;
     region_headers.ptr = @ptrFromInt(pr.initrd_physical_start + @sizeOf(tix.Header));
@@ -135,7 +134,7 @@ export fn bootHartMain(boot_hart_id: usize, fdt_physical_start: PhysicalAddress,
 
     const fdt_region_entry = init_process.allocateRegion(fdt_physical_slice.len, .{ .readable = true }, 0) catch @panic("OOM");
     const fdt_address = init_process.mapRegionEntry(fdt_region_entry, 0) catch @panic("mapRegionEntry");
-    init_process.context.register_file.a0 = fdt_address;
+    init_process.context.a0 = fdt_address;
 
     const dest: [*]u8 = @ptrCast(fdt_region_entry.region.?.allocation.ptr);
     var source: []u8 = undefined;
@@ -159,31 +158,27 @@ export fn bootHartMain(boot_hart_id: usize, fdt_physical_start: PhysicalAddress,
     };
     mm.logical_offset = mm.logical_start -% heap_physical_start;
     mm.kernel_offset = mm.kernel_start -% kernel_physical_start;
-    trampoline(satp, 0, mm.kernel_offset);
+    trampoline(0, satp, mm.kernel_offset);
 }
 
-extern fn secondaryHartEntry(hart_id: usize, x: usize) callconv(.Naked) noreturn;
+extern fn secondaryHartEntry(hart_id: Hart.Id, x: usize) callconv(.Naked) noreturn;
 
-export fn secondaryHartMain(hart_id: usize) noreturn {
+export fn secondaryHartMain(hart_id: Hart.Id) noreturn {
     log.info("Secondary hart with id {} booting.", .{hart_id});
     while (true) {
         asm volatile ("wfi");
     }
 }
-extern fn trampoline(satp: riscv.satp.Type, hart_index: usize, kernel_offset: usize) align(@sizeOf(Page)) noreturn;
+extern fn trampoline(hart_index: Hart.Index, satp: riscv.satp.Type, kernel_offset: usize) align(@sizeOf(Page)) noreturn;
 
-export fn main() noreturn {
+export fn main(hart_index: Hart.Index) noreturn {
     writer.writeFn = writeFn;
     trap.onAddressTranslationEnabled();
     mm.page_allocator.onAddressTranslationEnabled();
-    const init_process = proc.onAddressTranslationEnabled();
+    proc.onAddressTranslationEnabled();
     log.info("Address translation enabled for boot hart.", .{});
-    riscv.sstatus.clear(.spp);
-    sbi.time.setTimer(riscv.time.read() + 10 * 1_000_000);
-    returnToUserspace(&init_process.context);
+    proc.scheduleNext(null, hart_index);
 }
-
-extern fn returnToUserspace(context: *Process.Context) noreturn;
 
 pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
     log.err("PANIC: {s}.", .{msg});

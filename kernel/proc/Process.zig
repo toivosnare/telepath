@@ -14,13 +14,11 @@ const ConstPagePtr = mm.ConstPagePtr;
 const PageSlice = mm.PageSlice;
 const ConstPageFramePtr = mm.ConstPageFramePtr;
 const PageTable = mm.PageTable;
-const HartIndex = proc.HartIndex;
 const Process = @This();
 
 id: Id,
 parent: ?*Process,
 children: Children,
-state: State,
 region_entries: [MAX_REGIONS]RegionEntry,
 region_entries_head: ?*RegionEntry,
 page_table: PageTable.Ptr,
@@ -33,12 +31,6 @@ const MAX_REGIONS = 16;
 
 pub const Id = usize;
 pub const Children = std.BoundedArray(*Process, MAX_CHILDREN);
-pub const State = enum {
-    invalid,
-    ready,
-    running,
-    waiting,
-};
 pub const RegionEntry = struct {
     region: ?*Region,
     start_address: ?UserVirtualAddress,
@@ -81,43 +73,39 @@ pub const RegionEntry = struct {
     }
 };
 pub const Context = extern struct {
-    register_file: RegisterFile,
-    hart_index: HartIndex,
-
-    pub const RegisterFile = extern struct {
-        pc: usize,
-        ra: usize,
-        sp: usize,
-        gp: usize,
-        tp: usize,
-        t0: usize,
-        t1: usize,
-        t2: usize,
-        s0: usize,
-        s1: usize,
-        a0: usize,
-        a1: usize,
-        a2: usize,
-        a3: usize,
-        a4: usize,
-        a5: usize,
-        a6: usize,
-        a7: usize,
-        s2: usize,
-        s3: usize,
-        s4: usize,
-        s5: usize,
-        s6: usize,
-        s7: usize,
-        s8: usize,
-        s9: usize,
-        s10: usize,
-        s11: usize,
-        t3: usize,
-        t4: usize,
-        t5: usize,
-        t6: usize,
-    };
+    pc: usize,
+    ra: usize,
+    sp: usize,
+    gp: usize,
+    tp: usize,
+    t0: usize,
+    t1: usize,
+    t2: usize,
+    s0: usize,
+    s1: usize,
+    a0: usize,
+    a1: usize,
+    a2: usize,
+    a3: usize,
+    a4: usize,
+    a5: usize,
+    a6: usize,
+    a7: usize,
+    s2: usize,
+    s3: usize,
+    s4: usize,
+    s5: usize,
+    s6: usize,
+    s7: usize,
+    s8: usize,
+    s9: usize,
+    s10: usize,
+    s11: usize,
+    t3: usize,
+    t4: usize,
+    t5: usize,
+    t6: usize,
+    hart_index: proc.Hart.Index,
 
     pub fn process(self: *Context) *Process {
         return @fieldParentPtr("context", self);
@@ -301,7 +289,7 @@ pub fn deinit(self: *Process) void {
     for (self.children.slice()) |child| {
         child.deinit();
     }
-    self.state = .invalid;
+    self.id = 0;
     for (&self.region_entries) |*region_entry| {
         if (region_entry.region == null)
             continue;
@@ -312,11 +300,12 @@ pub fn deinit(self: *Process) void {
     // TODO: page table?
     // slef.page_table = ;
     @memset(mem.asBytes(&self.context), 0);
-    if (self.state == .ready)
-        proc.dequeue(self);
+    self.wait_address = 0;
+    proc.dequeue(self);
 }
 
-pub fn handlePageFault(self: *Process, faulting_address: UserVirtualAddress) *Process {
+// TODO: handle page faults properly.
+pub fn handlePageFault(self: *Process, faulting_address: UserVirtualAddress) noreturn {
     if (faulting_address >= mm.user_virtual_end)
         @panic("non user virtual address faulting");
 
@@ -333,15 +322,17 @@ pub fn handlePageFault(self: *Process, faulting_address: UserVirtualAddress) *Pr
                 .executable = e.permissions.executable,
                 .user = true,
                 .global = false,
-            });
+            }) catch @panic("OOM");
             riscv.@"sfence.vma"(faulting_address, null);
             break;
         }
     } else {
-        @panic("not mapped");
+        const hart_index = self.context.hart_index;
+        self.deinit();
+        proc.scheduleNext(null, hart_index);
     }
 
-    return self;
+    proc.scheduleCurrent(self);
 }
 
 pub fn hasRegion(self: *Process, region: *const Region) ?*RegionEntry {
