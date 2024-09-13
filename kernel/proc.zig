@@ -2,31 +2,36 @@ const std = @import("std");
 const log = std.log;
 const math = std.math;
 const mem = std.mem;
+const assert = std.debug.assert;
 const mm = @import("mm.zig");
+const entry = @import("entry.zig");
 const riscv = @import("riscv.zig");
 const sbi = @import("sbi");
+const PhysicalAddress = mm.PhysicalAddress;
 const PhysicalPageNumber = mm.PhysicalPageNumber;
 const PageTable = mm.PageTable;
 
 pub const Process = @import("proc/Process.zig");
-
-const MAX_PROCESSES = 64;
-pub var table: [MAX_PROCESSES]Process = undefined;
-pub var queue_head: ?*Process = null;
-pub var queue_tail: ?*Process = null;
-
-pub const MAX_HARTS = 8;
-pub var hart_array: [MAX_HARTS]Hart = undefined;
-pub var harts: []Hart = undefined;
-
 pub const Hart = extern struct {
     id: Id,
     pub const Id = usize;
     pub const Index = usize;
 };
 
-pub const quantum_ns: usize = 1_000_000;
+pub const MAX_HARTS = 8;
+pub var hart_array: [MAX_HARTS]Hart = undefined;
+pub var harts: []Hart = undefined;
 
+// TODO: read from device tree.
+const ticks_per_ns: usize = 10;
+const quantum_ns: usize = 1_000_000;
+const MAX_PROCESSES = 64;
+
+var table: [MAX_PROCESSES]Process = undefined;
+var scheduling_head: ?*Process = null;
+var scheduling_tail: ?*Process = null;
+var wait_head: ?*Process = null;
+var wait_tail: ?*Process = null;
 var next_pid: Process.Id = 2;
 
 pub fn init() *Process {
@@ -40,8 +45,11 @@ pub fn init() *Process {
         }
         p.region_entries_head = null;
         p.wait_address = 0;
-        p.prev = null;
-        p.next = null;
+        p.wait_end_time = 0;
+        p.scheduling_prev = null;
+        p.scheduling_next = null;
+        p.wait_prev = null;
+        p.wait_next = null;
     }
 
     const init_process = &table[0];
@@ -93,10 +101,34 @@ pub fn allocate() !*Process {
     return error.OutOfMemory;
 }
 
+pub fn free(process: *Process) void {
+    for (process.children.slice()) |child|
+        free(child);
+
+    process.id = 0;
+    process.parent = null;
+    process.children.resize(0) catch unreachable;
+    for (&process.region_entries) |*region_entry| {
+        if (region_entry.region == null)
+            continue;
+        process.unmapRegionEntry(region_entry) catch {};
+        process.freeRegionEntry(region_entry) catch unreachable;
+    }
+    process.region_entries_head = null;
+    // TODO: page table?
+    // slef.page_table = ;
+    @memset(mem.asBytes(&process.context), 0);
+    process.wait_address = 0;
+    process.wait_end_time = 0;
+    dequeue(process);
+    unwait(process);
+}
+
 pub fn scheduleNext(current_process: ?*Process, hart_index: Hart.Index) noreturn {
     var next_process: *Process = undefined;
 
-    if (queue_head) |next| {
+    if (scheduling_head) |next| {
+        log.debug("Scheduling next.", .{});
         dequeue(next);
         if (current_process) |cur|
             enqueue(cur);
@@ -109,12 +141,17 @@ pub fn scheduleNext(current_process: ?*Process, hart_index: Hart.Index) noreturn
         next.context.hart_index = hart_index;
         next_process = next;
     } else if (current_process != null) {
+        log.debug("Scheduling current.", .{});
         next_process = current_process.?;
     } else {
-        idle(hart_index);
+        log.debug("Entering idle.", .{});
+        sbi.time.setTimer(riscv.time.read() + ticks_per_ns * quantum_ns);
+        idle(@intFromPtr(&mm.kernel_stack) + (hart_index + 1) * entry.KERNEL_STACK_SIZE_PER_HART, hart_index);
     }
 
-    sbi.time.setTimer(riscv.time.read() + 10 * quantum_ns);
+    if (current_process == null)
+        riscv.sstatus.clear(.spp);
+    sbi.time.setTimer(riscv.time.read() + ticks_per_ns * quantum_ns);
     returnToUserspace(&next_process.context);
 }
 
@@ -123,48 +160,113 @@ pub fn scheduleCurrent(current_process: *Process) noreturn {
 }
 
 extern fn returnToUserspace(context: *Process.Context) noreturn;
+extern fn idle(stack_pointer: usize, hart_index: Hart.Index) noreturn;
 
-fn idle(hart_index: Hart.Index) noreturn {
-    // TODO: interrupts? Other harts should send IPI to wake up.
-    asm volatile (
-        \\ csrw sscratch, %[sscratch]
-        \\ mv a1, %[hart_index]
-        \\1:
-        \\ wfi
-        \\ j 1b
-        :
-        : [sscratch] "r" (0),
-          [hart_index] "r" (hart_index),
-    );
-    unreachable;
-}
-
-pub fn enqueue(process: *Process) void {
+fn enqueue(process: *Process) void {
     log.debug("Adding process with ID {d} to the process queue.", .{process.id});
-    process.prev = queue_tail;
-    process.next = null;
-    if (queue_tail) |tail| {
-        tail.next = process;
+    process.scheduling_prev = scheduling_tail;
+    process.scheduling_next = null;
+    if (scheduling_tail) |tail| {
+        tail.scheduling_next = process;
     } else {
-        queue_head = process;
+        scheduling_head = process;
     }
-    queue_tail = process;
+    scheduling_tail = process;
 }
 
-pub fn dequeue(process: *Process) void {
+fn dequeue(process: *Process) void {
     log.debug("Removing process with ID {d} from the process queue.", .{process.id});
-    if (process.prev) |prev| {
-        prev.next = process.next;
+    if (process.scheduling_prev) |prev| {
+        prev.scheduling_next = process.scheduling_next;
     } else {
-        queue_head = process.next;
+        scheduling_head = process.scheduling_next;
     }
-    if (process.next) |next| {
-        next.prev = process.prev;
+    if (process.scheduling_next) |next| {
+        next.scheduling_prev = process.scheduling_prev;
     } else {
-        queue_tail = process.prev;
+        scheduling_tail = process.scheduling_prev;
     }
-    process.prev = null;
-    process.next = null;
+    process.scheduling_prev = null;
+    process.scheduling_next = null;
+}
+
+pub fn wait(process: *Process, timeout_ns: u64) void {
+    assert(process.wait_prev == null);
+    assert(process.wait_next == null);
+    process.wait_end_time = riscv.time.read() + ticks_per_ns * timeout_ns;
+
+    process.wait_prev = wait_tail;
+    process.wait_next = null;
+    while (process.wait_prev) |prev| {
+        if (prev.wait_end_time <= process.wait_end_time)
+            break;
+        process.wait_next = process.wait_prev;
+        process.wait_prev = prev.wait_prev;
+    }
+
+    if (process.wait_prev) |prev| {
+        prev.wait_next = process;
+    } else {
+        wait_head = process;
+    }
+    if (process.wait_next) |next| {
+        next.wait_prev = process;
+    } else {
+        wait_tail = process;
+    }
+}
+
+fn unwait(process: *Process) void {
+    if (process.wait_prev) |prev| {
+        prev.wait_next = process.wait_next;
+    } else {
+        wait_head = process.wait_next;
+    }
+    if (process.wait_next) |next| {
+        next.wait_prev = process.wait_prev;
+    } else {
+        wait_tail = process.wait_prev;
+    }
+
+    process.wait_prev = null;
+    process.wait_next = null;
+}
+
+pub fn checkWaiters(time: u64) void {
+    var process: ?*Process = wait_head;
+    while (process) |p| {
+        if (p.wait_end_time > time) {
+            wait_head = p;
+            p.wait_prev = null;
+            return;
+        }
+
+        process = p.wait_next;
+        p.wait_prev = null;
+        p.wait_next = null;
+        p.wait_end_time = 0;
+        enqueue(p);
+    }
+
+    wait_head = null;
+    wait_tail = null;
+}
+
+pub fn wake(address: PhysicalAddress, waiter_count: usize) usize {
+    // TODO: Use something faster than linear search.
+    var w = waiter_count;
+    for (&table) |*p| {
+        if (w == 0)
+            break;
+        if (p.wait_address == address) {
+            unwait(p);
+            p.context.a0 = 0;
+            p.wait_address = 0;
+            enqueue(p);
+            w -= 1;
+        }
+    }
+    return waiter_count - w;
 }
 
 pub fn processFromId(id: Process.Id) ?*Process {

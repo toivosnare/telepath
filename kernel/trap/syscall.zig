@@ -12,7 +12,7 @@ pub fn exit(process: *Process) noreturn {
     const exit_code = process.context.a1;
     log.debug("Process with PID {d} is exiting with exit code {d}.", .{ process.id, exit_code });
     const hart_index = process.context.hart_index;
-    process.deinit();
+    proc.free(process);
     proc.scheduleNext(null, hart_index);
 }
 
@@ -26,7 +26,7 @@ pub fn fork(process: *Process) ForkError!usize {
     log.debug("Process with ID {d} is forking.", .{process.id});
 
     const child_process = try proc.allocate();
-    errdefer child_process.deinit();
+    errdefer proc.free(child_process);
 
     process.children.append(child_process) catch return error.OutOfMemory;
     child_process.parent = process;
@@ -83,7 +83,7 @@ pub fn spawn(process: *Process) SpawnError!usize {
     }
 
     const child_process = try proc.allocate();
-    errdefer child_process.deinit();
+    errdefer proc.free(child_process);
 
     process.children.append(child_process) catch return error.OutOfMemory;
     child_process.parent = process;
@@ -120,7 +120,7 @@ pub fn kill(process: *Process) KillError!usize {
     } else {
         return error.NoPermission;
     };
-    child_process.deinit();
+    proc.free(child_process);
     return 0;
 }
 
@@ -205,4 +205,46 @@ pub fn free(process: *Process) FreeError!usize {
     const region_entry = process.hasRegion(region) orelse return error.NoPermission;
     try process.freeRegionEntry(region_entry);
     return 0;
+}
+
+// TODO: Allow waiting on (multiple) interrupt(s) or child process(es).
+pub const WaitError = libt.syscall.WaitError;
+pub fn wait(process: *Process) WaitError!usize {
+    const virtual_address = process.context.a1;
+    const expected_value = process.context.a2;
+    const timeout_ns = process.context.a3;
+    log.debug("Process with ID {d} is waiting on address 0x{x} with timeout of {d} ns.", .{ process.id, virtual_address, timeout_ns });
+
+    if (virtual_address >= mm.user_virtual_end)
+        return error.InvalidParameter;
+    if (!mem.isAligned(virtual_address, @alignOf(u32)))
+        return error.InvalidParameter;
+
+    if (virtual_address != 0) {
+        const physical_address = process.page_table.translate(virtual_address) catch return error.InvalidParameter;
+        const actual_value = @as(*u32, @ptrFromInt(virtual_address)).*;
+        if (actual_value != expected_value)
+            return error.WouldBlock;
+        process.wait_address = physical_address;
+    }
+
+    proc.wait(process, timeout_ns);
+    proc.scheduleNext(null, process.context.hart_index);
+}
+
+pub const WakeError = libt.syscall.WakeError;
+pub fn wake(process: *Process) WakeError!usize {
+    const virtual_address = process.context.a1;
+    const waiter_count = process.context.a2;
+    log.debug("Process with ID {d} is waking {d} waiters waiting on address 0x{x}.", .{ process.id, waiter_count, virtual_address });
+
+    if (virtual_address >= mm.user_virtual_end)
+        return error.InvalidParameter;
+    if (!mem.isAligned(virtual_address, @alignOf(u32)))
+        return error.InvalidParameter;
+    if (waiter_count == 0)
+        return error.InvalidParameter;
+
+    const physical_address = process.page_table.translate(virtual_address) catch return error.InvalidParameter;
+    return proc.wake(physical_address, waiter_count);
 }

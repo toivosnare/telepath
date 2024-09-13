@@ -23,8 +23,12 @@ region_entries: [MAX_REGIONS]RegionEntry,
 region_entries_head: ?*RegionEntry,
 page_table: PageTable.Ptr,
 context: Context,
-prev: ?*Process,
-next: ?*Process,
+wait_address: PhysicalAddress,
+wait_end_time: u64,
+scheduling_prev: ?*Process,
+scheduling_next: ?*Process,
+wait_prev: ?*Process,
+wait_next: ?*Process,
 
 const MAX_CHILDREN = 16;
 const MAX_REGIONS = 16;
@@ -285,25 +289,6 @@ pub fn freeRegionEntry(self: *Process, region_entry: *RegionEntry) !void {
     region_entry.region = null;
 }
 
-pub fn deinit(self: *Process) void {
-    for (self.children.slice()) |child| {
-        child.deinit();
-    }
-    self.id = 0;
-    for (&self.region_entries) |*region_entry| {
-        if (region_entry.region == null)
-            continue;
-        self.unmapRegionEntry(region_entry) catch {};
-        self.freeRegionEntry(region_entry) catch unreachable;
-    }
-    self.region_entries_head = null;
-    // TODO: page table?
-    // slef.page_table = ;
-    @memset(mem.asBytes(&self.context), 0);
-    self.wait_address = 0;
-    proc.dequeue(self);
-}
-
 // TODO: handle page faults properly.
 pub fn handlePageFault(self: *Process, faulting_address: UserVirtualAddress) noreturn {
     if (faulting_address >= mm.user_virtual_end)
@@ -328,7 +313,7 @@ pub fn handlePageFault(self: *Process, faulting_address: UserVirtualAddress) nor
         }
     } else {
         const hart_index = self.context.hart_index;
-        self.deinit();
+        proc.free(self);
         proc.scheduleNext(null, hart_index);
     }
 

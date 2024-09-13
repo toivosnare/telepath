@@ -21,7 +21,6 @@ pub fn init() void {
         .seie = true,
         .lcofie = true,
     });
-    riscv.sstatus.set(.sie);
 
     // Some syscall need to access user space memory.
     riscv.sstatus.set(.sum);
@@ -50,9 +49,14 @@ export fn handleTrap2(context: ?*Process.Context, hart_index: proc.Hart.Index) n
 fn handleInterrupt(code: riscv.scause.InterruptCode, current_process: ?*Process, hart_index: proc.Hart.Index) noreturn {
     log.debug("Interrupt: code={s}", .{@tagName(code)});
     switch (code) {
-        .supervisor_timer_interrupt => proc.scheduleNext(current_process, hart_index),
+        .supervisor_timer_interrupt => handleTimerInterrupt(current_process, hart_index),
         else => @panic("unhandled interrupt"),
     }
+}
+
+fn handleTimerInterrupt(current_process: ?*Process, hart_index: proc.Hart.Index) noreturn {
+    proc.checkWaiters(riscv.time.read());
+    proc.scheduleNext(current_process, hart_index);
 }
 
 fn handleException(code: riscv.scause.ExceptionCode, current_process: ?*Process) noreturn {
@@ -92,7 +96,8 @@ fn handleSyscall(current_process: *Process) noreturn {
         .refcount => syscall.refcount(current_process),
         .unmap => syscall.unmap(current_process),
         .free => syscall.free(current_process),
-        else => @panic("unhandled syscall"),
+        .wait => syscall.wait(current_process),
+        .wake => syscall.wake(current_process),
     };
     current_process.context.a0 = libt.syscall.packResult(result);
     proc.scheduleCurrent(current_process);

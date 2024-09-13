@@ -52,17 +52,20 @@ export fn _start() callconv(.Naked) noreturn {
 }
 
 pub fn main() noreturn {
-    var gpa = heap.GeneralPurposeAllocator(.{
-        .thread_safe = false,
-        .safety = false,
-    }){};
-    var driver_map = DriverMap.init(gpa.allocator());
-    populateDriverMap(&driver_map) catch hang();
+    while (true) {
+        _ = syscall.wait(null, 0, 5_000_000) catch unreachable;
+    }
+    // var gpa = heap.GeneralPurposeAllocator(.{
+    //     .thread_safe = false,
+    //     .safety = false,
+    // }){};
+    // var driver_map = DriverMap.init(gpa.allocator());
+    // populateDriverMap(&driver_map) catch hang();
 
-    if (driver_map.get("ns16550a")) |elf_file|
-        _ = loadElf(elf_file) catch hang();
+    // if (driver_map.get("ns16550a")) |elf_file|
+    //     _ = loadElf(elf_file) catch hang();
 
-    hang();
+    // hang();
 }
 
 fn hang() noreturn {

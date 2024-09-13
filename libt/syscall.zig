@@ -1,4 +1,5 @@
 const std = @import("std");
+const atomic = std.atomic;
 const page_size = std.mem.page_size;
 
 pub const Id = enum(usize) {
@@ -17,7 +18,7 @@ pub const Id = enum(usize) {
     wake = 12,
 };
 
-pub const Error = IdentifyError || ForkError || SpawnError || KillError || AllocateError || MapError || ShareError || RefcountError || UnmapError;
+pub const Error = IdentifyError || ForkError || SpawnError || KillError || AllocateError || MapError || ShareError || RefcountError || UnmapError || WaitError || WakeError;
 
 pub fn packResult(result: Error!usize) usize {
     if (result) |res| {
@@ -29,6 +30,7 @@ pub fn packResult(result: Error!usize) usize {
             error.NoPermission => -3,
             error.Reserved => -4,
             error.Exists => -5,
+            error.WouldBlock => -6,
         };
         return @bitCast(signed);
     }
@@ -42,6 +44,7 @@ fn unpackResult(comptime E: type, a0: usize) E!usize {
         -3 => error.NoPermission,
         -4 => error.Reserved,
         -5 => error.Exists,
+        -6 => error.WouldBlock,
         else => a0,
     };
     return @errorCast(result);
@@ -116,6 +119,16 @@ pub fn unmap(address: [*]align(page_size) [page_size]u8) UnmapError!usize {
 pub const FreeError = error{ InvalidParameter, NoPermission, Exists };
 pub fn free(region: usize) FreeError!void {
     _ = unpackResult(FreeError, syscall1(.free, region)) catch |err| return err;
+}
+
+pub const WaitError = error{ InvalidParameter, WouldBlock };
+pub fn wait(address: ?*const atomic.Value(u32), expected_value: u32, timeout_ns: usize) WaitError!usize {
+    return unpackResult(WaitError, syscall3(.wait, @intFromPtr(address), expected_value, timeout_ns));
+}
+
+pub const WakeError = error{InvalidParameter};
+pub fn wake(address: *const atomic.Value(u32), waiter_count: usize) WakeError!usize {
+    return unpackResult(WakeError, syscall2(.wake, @intFromPtr(address), waiter_count));
 }
 
 pub const RegionDescription = packed struct {

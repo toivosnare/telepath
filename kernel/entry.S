@@ -117,3 +117,14 @@ returnToUserspace:
 	ld t6, 248(a0)
 	ld a0, 80(a0)
 	sret
+
+.global idle
+idle:
+	mv sp, a0
+	mv a1, a1
+	li t0, 0
+	csrw sscratch, t0
+	csrs sstatus, 2
+1:
+	wfi
+	j 1b
