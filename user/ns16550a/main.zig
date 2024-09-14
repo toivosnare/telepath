@@ -153,9 +153,20 @@ pub fn main(args: []usize) noreturn {
     const ns16550a: *volatile Ns16550A = @ptrCast(syscall.map(region, null) catch unreachable);
     ns16550a.init();
 
-    const byte_stream = @import("services").byte_stream;
+    const stdin = @import("services").stdin;
     while (true) {
-        const c = byte_stream.read();
-        ns16550a.putc(c);
+        stdin.mutex.lock();
+        defer stdin.mutex.unlock();
+
+        while (stdin.isEmpty())
+            stdin.empty.wait(&stdin.mutex);
+
+        const slice = stdin.unreadSlice();
+        var it = slice.iterator();
+        while (it.next()) |c| {
+            ns16550a.putc(c);
+        }
+        stdin.read_index = (stdin.read_index + slice.length()) % libt.service.byte_stream.provide.Type.capacity;
+        stdin.length -= slice.length();
     }
 }

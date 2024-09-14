@@ -66,7 +66,7 @@ pub fn main() noreturn {
 }
 
 fn hang() noreturn {
-    syscall.wait(null, 0, 99999999) catch unreachable;
+    syscall.wait(null, 0, 10_000_000_000) catch unreachable;
     unreachable;
 }
 
@@ -168,9 +168,7 @@ fn handleProvidedServiceSegment(size: usize, id: usize) !usize {
 
     if (id == service.hash(service.byte_stream)) {
         const byte_stream: *align(mem.page_size) service.byte_stream.consume.Type = @ptrCast(try syscall.map(region, null));
-        for ("Hello from init!") |c| {
-            byte_stream.write(c);
-        }
+        byte_stream.writeSlice("Hello from init!\n");
         _ = try syscall.unmap(@ptrCast(byte_stream));
     }
 
