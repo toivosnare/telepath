@@ -1,14 +1,10 @@
 const std = @import("std");
-const Build = std.Build;
-const Step = Build.Step;
-const heap = std.heap;
-const mem = std.mem;
-const ArrayList = std.ArrayList;
 const Keccak = std.crypto.hash.sha3.Keccak(1600, 32, 0x06, 24);
+const libt = @import("libt.zig");
+const Mutex = libt.sync.Mutex;
+const Condvar = libt.sync.Condvar;
 
-pub const Test = @import("service/Test.zig");
-
-pub const PF_P: u32 = 1 << 3;
+pub const byte_stream = @import("service/byte_stream.zig");
 
 pub fn hash(comptime Service: type) u32 {
     var result: u32 = undefined;
@@ -18,96 +14,76 @@ pub fn hash(comptime Service: type) u32 {
     return result;
 }
 
-pub const Options = struct {
-    T: type,
-    name: []const u8,
-    flags: Flags,
+pub const Flags = packed struct(u4) {
+    executable: bool,
+    writable: bool,
+    readable: bool,
+    provide: bool,
 
-    pub const Flags = packed struct {
-        execute: bool = false,
-        write: bool = false,
-        read: bool = false,
-        provide: bool = false,
-    };
+    pub const mask_p = 1 << @bitOffsetOf(Flags, "provide");
+    pub const mask_r = 1 << @bitOffsetOf(Flags, "redable");
+    pub const mask_w = 1 << @bitOffsetOf(Flags, "writable");
+    pub const mask_x = 1 << @bitOffsetOf(Flags, "executable");
 };
 
-pub fn add(exe: *Step.Compile, options: []const Options, libt_module: *Build.Module) void {
-    exe.linker_script = generateLinkerScript(exe, options);
-    const b = exe.step.owner;
-    const service_module = b.createModule(.{
-        .root_source_file = generateServiceFile(exe, options),
-        .target = exe.root_module.resolved_target,
-        .optimize = exe.root_module.optimize,
-    });
-    service_module.addImport("libt", libt_module);
-    exe.root_module.addImport("services", service_module);
-}
+pub fn Channel(comptime T: type, comptime c: usize, comptime direction: enum { receive, transmit, bidirectional }) type {
+    return extern struct {
+        buffer: [capacity]T,
+        length: usize,
+        read_index: usize,
+        write_index: usize,
+        mutex: Mutex,
+        empty: Condvar,
+        full: Condvar,
 
-fn generateServiceFile(exe: *Step.Compile, options: []const Options) Build.LazyPath {
-    var arena = heap.ArenaAllocator.init(heap.page_allocator);
-    defer arena.deinit();
+        pub const capacity: usize = c;
+        const Self = @This();
 
-    var buffer = ArrayList(u8).init(arena.allocator());
-    defer buffer.deinit();
-    var writer = buffer.writer();
+        pub fn init(self: *Self) void {
+            self.* = .{
+                .mutex = .{},
+                .empty = .{},
+                .full = .{},
+                .length = 0,
+                .read_index = 0,
+                .write_index = 0,
+                .buffer = undefined,
+            };
+        }
 
-    writer.writeAll("const service = @import(\"libt\").service;\n") catch @panic("OOM");
-    inline for (options) |option| {
-        writer.print(
-            \\extern var @"{s}_start": anyopaque;
-            \\pub const @"{s}": *{s} = @alignCast(@ptrCast(&@"{s}_start"));
-            \\
-        , .{ option.name, option.name, @typeName(option.T), option.name }) catch @panic("OOM");
-    }
+        pub fn read(self: *Self) T {
+            if (direction == .transmit)
+                @compileError("Cannot read from transmit channel.");
 
-    const b = exe.step.owner;
-    const service_file_step = b.addWriteFiles();
-    exe.step.dependOn(&service_file_step.step);
-    return service_file_step.add("services.zig", buffer.items);
-}
+            self.mutex.lock();
+            defer self.mutex.unlock();
 
-fn generateLinkerScript(exe: *Step.Compile, options: []const Options) Build.LazyPath {
-    var arena = heap.ArenaAllocator.init(heap.page_allocator);
-    defer arena.deinit();
+            while (self.length == 0)
+                self.empty.wait(&self.mutex);
 
-    var buffer = ArrayList(u8).init(arena.allocator());
-    defer buffer.deinit();
-    var writer = buffer.writer();
+            const result = self.buffer[self.read_index];
+            self.read_index = (self.read_index + 1) % capacity;
+            self.length -= 1;
 
-    writer.writeAll(
-        \\PHDRS {
-        \\rodata PT_LOAD FLAGS(0x4);
-        \\text   PT_LOAD FLAGS(0x5);
-        \\data   PT_LOAD FLAGS(0x6);
-        \\
-    ) catch @panic("OOM");
-    inline for (options) |option| {
-        writer.print("{s} 0x{x} FLAGS(0x{x});\n", .{ option.name, hash(option.T), @as(u4, @bitCast(option.flags)) }) catch @panic("OOM");
-    }
-    writer.writeAll("}\n\n") catch @panic("OOM");
+            self.full.notify(.one);
+            return result;
+        }
 
-    writer.writeAll(
-        \\SECTIONS {
-        \\. = 0x1000;
-        \\.rodata : ALIGN(0x1000) { *(.rodata .rodata.*)             } :rodata
-        \\.text   : ALIGN(0x1000) { *(.text .text.*)                 } :text
-        \\.data   : ALIGN(0x1000) { *(.data .data.* .sdata .sdata.*) } :data
-        \\.bss    : ALIGN(0x1000) { *(.bss .bss.*)                   } :data
-        \\
-    ) catch @panic("OOM");
-    inline for (options) |option| {
-        const page_size = 4096;
-        const service_size = mem.alignForward(usize, @sizeOf(option.T), page_size);
-        writer.print(
-            ".{s} (TYPE = SHT_NOBITS) : ALIGN(0x1000) {{ {s}_start = .; . += 0x{x}; }} :{s}\n",
-            .{ option.name, option.name, service_size, option.name },
-        ) catch @panic("OOM");
-    }
-    writer.writeAll("}\n") catch @panic("OOM");
+        pub fn write(self: *Self, item: T) void {
+            if (direction == .receive)
+                @compileError("Cannot write to receive channel.");
 
-    const b = exe.step.owner;
-    const linker_script_step = b.addWriteFiles();
-    exe.step.dependOn(&linker_script_step.step);
-    const linker_script_name = b.fmt("{s}.ld", .{exe.name});
-    return linker_script_step.add(linker_script_name, buffer.items);
+            self.mutex.lock();
+            defer self.mutex.unlock();
+
+            while (self.length == capacity)
+                self.full.wait(&self.mutex);
+
+            self.buffer[self.write_index] = item;
+            self.write_index = (self.write_index + 1) % capacity;
+            self.length += 1;
+
+            self.empty.notify(.one);
+        }
+    };
 }

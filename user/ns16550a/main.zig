@@ -153,8 +153,9 @@ pub fn main(args: []usize) noreturn {
     const ns16550a: *volatile Ns16550A = @ptrCast(syscall.map(region, null) catch unreachable);
     ns16550a.init();
 
-    const service = @import("services").@"test";
-    const string = (&service.buffer)[0..service.write_ptr];
-    ns16550a.puts(string);
-    while (true) {}
+    const byte_stream = @import("services").byte_stream;
+    while (true) {
+        const c = byte_stream.read();
+        ns16550a.putc(c);
+    }
 }

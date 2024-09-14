@@ -122,8 +122,8 @@ pub fn free(region: usize) FreeError!void {
 }
 
 pub const WaitError = error{ InvalidParameter, WouldBlock };
-pub fn wait(address: ?*const atomic.Value(u32), expected_value: u32, timeout_ns: usize) WaitError!usize {
-    return unpackResult(WaitError, syscall3(.wait, @intFromPtr(address), expected_value, timeout_ns));
+pub fn wait(address: ?*const atomic.Value(u32), expected_value: u32, timeout_ns: usize) WaitError!void {
+    _ = unpackResult(WaitError, syscall3(.wait, @intFromPtr(address), expected_value, timeout_ns)) catch |err| return err;
 }
 
 pub const WakeError = error{InvalidParameter};

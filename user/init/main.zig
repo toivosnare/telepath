@@ -52,24 +52,22 @@ export fn _start() callconv(.Naked) noreturn {
 }
 
 pub fn main() noreturn {
-    while (true) {
-        _ = syscall.wait(null, 0, 5_000_000) catch unreachable;
-    }
-    // var gpa = heap.GeneralPurposeAllocator(.{
-    //     .thread_safe = false,
-    //     .safety = false,
-    // }){};
-    // var driver_map = DriverMap.init(gpa.allocator());
-    // populateDriverMap(&driver_map) catch hang();
+    var gpa = heap.GeneralPurposeAllocator(.{
+        .thread_safe = false,
+        .safety = false,
+    }){};
+    var driver_map = DriverMap.init(gpa.allocator());
+    populateDriverMap(&driver_map) catch hang();
 
-    // if (driver_map.get("ns16550a")) |elf_file|
-    //     _ = loadElf(elf_file) catch hang();
+    if (driver_map.get("ns16550a")) |elf_file|
+        _ = loadElf(elf_file) catch hang();
 
-    // hang();
+    hang();
 }
 
 fn hang() noreturn {
-    while (true) {}
+    syscall.wait(null, 0, 99999999) catch unreachable;
+    unreachable;
 }
 
 fn populateDriverMap(driver_map: *DriverMap) !void {
@@ -151,10 +149,10 @@ fn handleServiceSegment(header: elf.Elf64_Phdr, regions: *Regions, arguments: *A
     const end_address = mem.alignForward(usize, header.p_vaddr + header.p_memsz, mem.page_size);
     const size = (end_address - start_address) / mem.page_size;
 
-    const region = try if (header.p_flags & service.PF_P != 0)
+    const region = try if (header.p_flags & service.Flags.mask_p != 0)
         handleProvidedServiceSegment(size, header.p_type)
     else
-        handleRequiredServiceSegment();
+        handleConsumedServiceSegment();
 
     var rd: *syscall.RegionDescription = try regions.addOne();
     rd.region = region;
@@ -168,15 +166,17 @@ fn handleServiceSegment(header: elf.Elf64_Phdr, regions: *Regions, arguments: *A
 fn handleProvidedServiceSegment(size: usize, id: usize) !usize {
     const region = try syscall.allocate(size, .{ .readable = true, .writable = true, .executable = true }, null);
 
-    if (id == service.hash(service.Test)) {
-        const test_service: *align(mem.page_size) service.Test = @ptrCast(try syscall.map(region, null));
-        test_service.puts("Hello from init!\n");
-        _ = try syscall.unmap(@ptrCast(test_service));
+    if (id == service.hash(service.byte_stream)) {
+        const byte_stream: *align(mem.page_size) service.byte_stream.consume.Type = @ptrCast(try syscall.map(region, null));
+        for ("Hello from init!") |c| {
+            byte_stream.write(c);
+        }
+        _ = try syscall.unmap(@ptrCast(byte_stream));
     }
 
     return region;
 }
 
-fn handleRequiredServiceSegment() !usize {
+fn handleConsumedServiceSegment() !usize {
     return error.NotImplemented;
 }

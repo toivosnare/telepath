@@ -11,8 +11,8 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("main.zig"),
         .target = target,
         .optimize = optimize,
-    }, &[_]service.Options{
-        .{ .T = service.Test, .name = "test", .flags = .{ .provide = true, .read = true } },
+    }, &[_]libt.ServiceOptions{
+        .{ .name = "byte_stream", .service = service.byte_stream, .mode = .provide },
     });
 
     b.installArtifact(exe);
