@@ -1,6 +1,7 @@
 pub const heap = @import("heap.zig");
 pub const service = @import("service.zig");
 pub const start = @import("start.zig");
+pub const sync = @import("sync.zig");
 pub const syscall = @import("syscall.zig");
 pub const tix = @import("tix.zig");
 
