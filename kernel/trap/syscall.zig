@@ -13,6 +13,8 @@ pub fn exit(process: *Process) noreturn {
     const exit_code = process.context.a1;
     log.debug("Process with PID {d} is exiting with exit code {d}.", .{ process.id, exit_code });
     const hart_index = process.context.hart_index;
+
+    proc.checkWaitChildProcess(process, exit_code);
     proc.free(process);
     proc.scheduleNext(null, hart_index);
 }
@@ -112,15 +114,10 @@ pub fn spawn(process: *Process) SpawnError!usize {
 
 pub const KillError = libt.syscall.KillError;
 pub fn kill(process: *Process) KillError!usize {
-    const child_process_id = process.context.a1;
-    log.debug("Process with ID {d} is killing child with ID {d}.", .{ process.id, child_process_id });
+    const child_pid = process.context.a1;
+    log.debug("Process with ID {d} is killing child with ID {d}.", .{ process.id, child_pid });
 
-    const child_process = for (process.children.constSlice()) |child| {
-        if (child.id == child_process_id)
-            break child;
-    } else {
-        return error.NoPermission;
-    };
+    const child_process = process.hasChildWithId(child_pid) orelse return error.NoPermission;
     proc.free(child_process);
     return 0;
 }
@@ -208,29 +205,31 @@ pub fn free(process: *Process) FreeError!usize {
     return 0;
 }
 
-// TODO: Allow waiting on (multiple) interrupt(s) or child process(es).
+// TODO: Allow waiting on multiple.
+// TODO: Allow waiting on interrupts.
 pub const WaitError = libt.syscall.WaitError;
 pub fn wait(process: *Process) WaitError!usize {
-    const virtual_address = process.context.a1;
-    const expected_value = process.context.a2;
-    const timeout_ns = process.context.a3;
-    log.debug("Process with ID {d} is waiting on address 0x{x} with timeout of {d} ns.", .{ process.id, virtual_address, timeout_ns });
+    const wait_reason_int = process.context.a1;
+    const timeout_ns = process.context.a2;
+    log.debug("Process with ID {d} is waiting.", .{process.id});
 
-    if (virtual_address >= mm.user_virtual_end)
-        return error.InvalidParameter;
-    if (!mem.isAligned(virtual_address, @alignOf(u32)))
-        return error.InvalidParameter;
+    if (wait_reason_int != 0) {
+        const wait_reason: *const libt.syscall.WaitReason = @ptrFromInt(wait_reason_int);
 
-    if (virtual_address != 0) {
-        const physical_address = process.page_table.translate(virtual_address) catch return error.InvalidParameter;
-        const actual_value = @as(*u32, @ptrFromInt(virtual_address)).*;
-        if (actual_value != expected_value)
-            return error.WouldBlock;
-        process.wait_address = physical_address;
+        if (wait_reason.tag == .futex) {
+            const virtual_address = @intFromPtr(wait_reason.payload.futex.address);
+            const expected_value = wait_reason.payload.futex.expected_value;
+            try proc.waitFutex(process, virtual_address, expected_value);
+        } else if (wait_reason.tag == .child_process) {
+            const child_pid = wait_reason.payload.child_process.pid;
+            try proc.waitChildProcess(process, child_pid);
+        } else {
+            return error.InvalidParameter;
+        }
     }
 
     if (timeout_ns != math.maxInt(usize))
-        proc.wait(process, timeout_ns);
+        proc.waitTimeout(process, timeout_ns);
     proc.scheduleNext(null, process.context.hart_index);
 }
 
@@ -248,5 +247,5 @@ pub fn wake(process: *Process) WakeError!usize {
         return error.InvalidParameter;
 
     const physical_address = process.page_table.translate(virtual_address) catch return error.InvalidParameter;
-    return proc.wake(physical_address, waiter_count);
+    return proc.checkWaitFutex(physical_address, waiter_count);
 }

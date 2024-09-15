@@ -31,6 +31,8 @@ pub fn packResult(result: Error!usize) usize {
             error.Reserved => -4,
             error.Exists => -5,
             error.WouldBlock => -6,
+            error.Timeout => -7,
+            error.Killed => -8,
         };
         return @bitCast(signed);
     }
@@ -45,6 +47,8 @@ fn unpackResult(comptime E: type, a0: usize) E!usize {
         -4 => error.Reserved,
         -5 => error.Exists,
         -6 => error.WouldBlock,
+        -7 => error.Timeout,
+        -8 => error.Killed,
         else => a0,
     };
     return @errorCast(result);
@@ -121,9 +125,9 @@ pub fn free(region: usize) FreeError!void {
     _ = unpackResult(FreeError, syscall1(.free, region)) catch |err| return err;
 }
 
-pub const WaitError = error{ InvalidParameter, WouldBlock };
-pub fn wait(address: ?*const atomic.Value(u32), expected_value: u32, timeout_ns: usize) WaitError!void {
-    _ = unpackResult(WaitError, syscall3(.wait, @intFromPtr(address), expected_value, timeout_ns)) catch |err| return err;
+pub const WaitError = error{ InvalidParameter, WouldBlock, Timeout, NoPermission, Killed };
+pub fn wait(reason: ?*const WaitReason, timeout_ns: usize) WaitError!usize {
+    return unpackResult(WaitError, syscall2(.wait, @intFromPtr(reason), timeout_ns));
 }
 
 pub const WakeError = error{InvalidParameter};
@@ -144,6 +148,25 @@ pub const Permissions = packed struct(u64) {
     writable: bool = false,
     readable: bool = false,
     padding: u61 = 0,
+};
+
+pub const WaitReason = extern struct {
+    payload: extern union {
+        futex: Futex,
+        child_process: ChildProcess,
+    },
+    tag: Tag,
+    pub const Futex = extern struct {
+        address: *const atomic.Value(u32),
+        expected_value: u32,
+    };
+    pub const ChildProcess = extern struct {
+        pid: usize,
+    };
+    pub const Tag = enum(u8) {
+        futex,
+        child_process,
+    };
 };
 
 inline fn syscall0(id: Id) usize {

@@ -55,7 +55,7 @@ fn handleInterrupt(code: riscv.scause.InterruptCode, current_process: ?*Process,
 }
 
 fn handleTimerInterrupt(current_process: ?*Process, hart_index: proc.Hart.Index) noreturn {
-    proc.checkWaiters(riscv.time.read());
+    proc.checkWaitTimeout(riscv.time.read());
     proc.scheduleNext(current_process, hart_index);
 }
 

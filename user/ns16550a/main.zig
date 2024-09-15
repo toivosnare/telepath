@@ -145,28 +145,31 @@ const Ns16550A = packed struct {
     }
 };
 
-pub fn main(args: []usize) noreturn {
+pub fn main(args: []usize) usize {
     _ = args;
 
-    const physical_address = 0x10000000;
-    const region = syscall.allocate(1, .{ .readable = true, .writable = true }, @ptrFromInt(physical_address)) catch unreachable;
-    const ns16550a: *volatile Ns16550A = @ptrCast(syscall.map(region, null) catch unreachable);
-    ns16550a.init();
+    libt.sleep(1_000) catch unreachable;
+    return 22;
 
-    const stdin = @import("services").stdin;
-    while (true) {
-        stdin.mutex.lock();
-        defer stdin.mutex.unlock();
+    // const physical_address = 0x10000000;
+    // const region = syscall.allocate(1, .{ .readable = true, .writable = true }, @ptrFromInt(physical_address)) catch unreachable;
+    // const ns16550a: *volatile Ns16550A = @ptrCast(syscall.map(region, null) catch unreachable);
+    // ns16550a.init();
 
-        while (stdin.isEmpty())
-            stdin.empty.wait(&stdin.mutex);
+    // const stdin = @import("services").stdin;
+    // while (true) {
+    //     stdin.mutex.lock();
+    //     defer stdin.mutex.unlock();
 
-        const slice = stdin.unreadSlice();
-        var it = slice.iterator();
-        while (it.next()) |c| {
-            ns16550a.putc(c);
-        }
-        stdin.read_index = (stdin.read_index + slice.length()) % libt.service.byte_stream.provide.Type.capacity;
-        stdin.length -= slice.length();
-    }
+    //     while (stdin.isEmpty())
+    //         stdin.empty.wait(&stdin.mutex);
+
+    //     const slice = stdin.unreadSlice();
+    //     var it = slice.iterator();
+    //     while (it.next()) |c| {
+    //         ns16550a.putc(c);
+    //     }
+    //     stdin.read_index = (stdin.read_index + slice.length()) % libt.service.byte_stream.provide.Type.capacity;
+    //     stdin.length -= slice.length();
+    // }
 }

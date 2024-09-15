@@ -7,6 +7,7 @@ const mm = @import("mm.zig");
 const entry = @import("entry.zig");
 const riscv = @import("riscv.zig");
 const sbi = @import("sbi");
+const libt = @import("libt");
 const PhysicalAddress = mm.PhysicalAddress;
 const PhysicalPageNumber = mm.PhysicalPageNumber;
 const PageTable = mm.PageTable;
@@ -44,7 +45,7 @@ pub fn init() *Process {
             re.region = null;
         }
         p.region_entries_head = null;
-        p.wait_address = 0;
+        p.wait_reason = .{ .none = {} };
         p.wait_end_time = 0;
         p.scheduling_prev = null;
         p.scheduling_next = null;
@@ -118,10 +119,9 @@ pub fn free(process: *Process) void {
     // TODO: page table?
     // slef.page_table = ;
     @memset(mem.asBytes(&process.context), 0);
-    process.wait_address = 0;
-    process.wait_end_time = 0;
+    process.wait_reason = .{ .none = {} };
     dequeue(process);
-    unwait(process);
+    unwaitTimeout(process);
 }
 
 pub fn scheduleNext(current_process: ?*Process, hart_index: Hart.Index) noreturn {
@@ -190,7 +190,7 @@ fn dequeue(process: *Process) void {
     process.scheduling_next = null;
 }
 
-pub fn wait(process: *Process, timeout_ns: u64) void {
+pub fn waitTimeout(process: *Process, timeout_ns: u64) void {
     assert(process.wait_prev == null);
     assert(process.wait_next == null);
     // TODO: Can overflow?
@@ -217,7 +217,7 @@ pub fn wait(process: *Process, timeout_ns: u64) void {
     }
 }
 
-fn unwait(process: *Process) void {
+fn unwaitTimeout(process: *Process) void {
     if (process.wait_prev) |prev| {
         prev.wait_next = process.wait_next;
     } else {
@@ -231,9 +231,33 @@ fn unwait(process: *Process) void {
 
     process.wait_prev = null;
     process.wait_next = null;
+    process.wait_end_time = 0;
 }
 
-pub fn checkWaiters(time: u64) void {
+pub fn waitFutex(process: *Process, virtual_address: usize, expected_value: u32) !void {
+    if (virtual_address >= mm.user_virtual_end)
+        return error.InvalidParameter;
+    if (!mem.isAligned(virtual_address, @alignOf(u32)))
+        return error.InvalidParameter;
+    if (virtual_address == 0)
+        return error.InvalidParameter;
+
+    const physical_address = process.page_table.translate(virtual_address) catch return error.InvalidParameter;
+    const actual_value = @as(*u32, @ptrFromInt(virtual_address)).*;
+    if (actual_value != expected_value)
+        return error.WouldBlock;
+
+    process.wait_reason = .{ .futex = physical_address };
+}
+
+pub fn waitChildProcess(process: *Process, child_pid: Process.Id) !void {
+    if (process.hasChildWithId(child_pid) == null)
+        return error.NoPermission;
+
+    process.wait_reason = .{ .child_process = child_pid };
+}
+
+pub fn checkWaitTimeout(time: u64) void {
     var process: ?*Process = wait_head;
     while (process) |p| {
         if (p.wait_end_time > time) {
@@ -241,8 +265,10 @@ pub fn checkWaiters(time: u64) void {
             p.wait_prev = null;
             return;
         }
-
         process = p.wait_next;
+
+        p.context.a0 = libt.syscall.packResult(error.Timeout);
+        p.wait_reason = .{ .none = {} };
         p.wait_prev = null;
         p.wait_next = null;
         p.wait_end_time = 0;
@@ -253,21 +279,32 @@ pub fn checkWaiters(time: u64) void {
     wait_tail = null;
 }
 
-pub fn wake(address: PhysicalAddress, waiter_count: usize) usize {
+pub fn checkWaitFutex(address: PhysicalAddress, waiter_count: usize) usize {
     // TODO: Use something faster than linear search.
     var w = waiter_count;
     for (&table) |*p| {
         if (w == 0)
             break;
-        if (p.wait_address == address) {
-            unwait(p);
+        if (p.wait_reason == .futex and p.wait_reason.futex == address) {
             p.context.a0 = 0;
-            p.wait_address = 0;
+            p.wait_reason = .{ .none = {} };
+            unwaitTimeout(p);
             enqueue(p);
             w -= 1;
         }
     }
     return waiter_count - w;
+}
+
+pub fn checkWaitChildProcess(child: *Process, exit_code: usize) void {
+    if (child.parent) |parent| {
+        if (parent.wait_reason == .child_process and parent.wait_reason.child_process == child.id) {
+            parent.context.a0 = exit_code;
+            parent.wait_reason = .{ .none = {} };
+            unwaitTimeout(parent);
+            enqueue(parent);
+        }
+    }
 }
 
 pub fn processFromId(id: Process.Id) ?*Process {

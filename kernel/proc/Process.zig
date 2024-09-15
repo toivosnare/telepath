@@ -5,6 +5,7 @@ const mem = std.mem;
 const mm = @import("../mm.zig");
 const proc = @import("../proc.zig");
 const riscv = @import("../riscv.zig");
+const libt = @import("libt");
 const Region = mm.Region;
 const PhysicalAddress = mm.PhysicalAddress;
 const UserVirtualAddress = mm.UserVirtualAddress;
@@ -23,7 +24,7 @@ region_entries: [MAX_REGIONS]RegionEntry,
 region_entries_head: ?*RegionEntry,
 page_table: PageTable.Ptr,
 context: Context,
-wait_address: PhysicalAddress,
+wait_reason: WaitReason,
 wait_end_time: u64,
 scheduling_prev: ?*Process,
 scheduling_next: ?*Process,
@@ -114,6 +115,17 @@ pub const Context = extern struct {
     pub fn process(self: *Context) *Process {
         return @fieldParentPtr("context", self);
     }
+};
+
+pub const WaitReason = union(Tag) {
+    pub const Tag = enum {
+        none,
+        futex,
+        child_process,
+    };
+    none: void,
+    futex: PhysicalAddress,
+    child_process: Process.Id,
 };
 
 pub fn allocateRegion(
@@ -314,6 +326,7 @@ pub fn handlePageFault(self: *Process, faulting_address: UserVirtualAddress) nor
         }
     } else {
         const hart_index = self.context.hart_index;
+        proc.checkWaitChildProcess(self, libt.syscall.packResult(error.Killed));
         proc.free(self);
         proc.scheduleNext(null, hart_index);
     }
@@ -333,6 +346,14 @@ pub fn hasRegionAtAddress(self: *Process, address: UserVirtualAddress) ?*RegionE
     for (&self.region_entries) |*region_entry| {
         if (region_entry.start_address == address)
             return region_entry;
+    }
+    return null;
+}
+
+pub fn hasChildWithId(self: Process, pid: Id) ?*Process {
+    for (self.children.slice()) |child| {
+        if (child.id == pid)
+            return child;
     }
     return null;
 }
