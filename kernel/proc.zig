@@ -178,12 +178,12 @@ fn dequeue(process: *Process) void {
     log.debug("Removing process with ID {d} from the process queue.", .{process.id});
     if (process.scheduling_prev) |prev| {
         prev.scheduling_next = process.scheduling_next;
-    } else {
+    } else if (scheduling_head == process) {
         scheduling_head = process.scheduling_next;
     }
     if (process.scheduling_next) |next| {
         next.scheduling_prev = process.scheduling_prev;
-    } else {
+    } else if (scheduling_tail == process) {
         scheduling_tail = process.scheduling_prev;
     }
     process.scheduling_prev = null;
