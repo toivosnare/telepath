@@ -2,6 +2,7 @@ const std = @import("std");
 const log = std.log;
 const assert = std.debug.assert;
 const mem = std.mem;
+const math = std.math;
 const libt = @import("libt");
 const proc = @import("../proc.zig");
 const mm = @import("../mm.zig");
@@ -228,7 +229,8 @@ pub fn wait(process: *Process) WaitError!usize {
         process.wait_address = physical_address;
     }
 
-    proc.wait(process, timeout_ns);
+    if (timeout_ns != math.maxInt(usize))
+        proc.wait(process, timeout_ns);
     proc.scheduleNext(null, process.context.hart_index);
 }
 

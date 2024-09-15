@@ -193,6 +193,7 @@ fn dequeue(process: *Process) void {
 pub fn wait(process: *Process, timeout_ns: u64) void {
     assert(process.wait_prev == null);
     assert(process.wait_next == null);
+    // TODO: Can overflow?
     process.wait_end_time = riscv.time.read() + ticks_per_ns * timeout_ns;
 
     process.wait_prev = wait_tail;

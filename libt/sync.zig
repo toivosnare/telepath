@@ -24,7 +24,7 @@ pub const Mutex = extern struct {
         @setCold(true);
 
         while (self.state.swap(contended, .acquire) != unlocked) {
-            syscall.wait(&self.state, contended, math.maxInt(u64)) catch |err| switch (err) {
+            syscall.wait(&self.state, contended, math.maxInt(usize)) catch |err| switch (err) {
                 error.WouldBlock => {},
                 else => unreachable,
             };
@@ -44,7 +44,7 @@ pub const Condvar = extern struct {
         const old_state = self.state.load(.monotonic);
 
         mutex.unlock();
-        syscall.wait(&self.state, old_state, math.maxInt(u32)) catch |err| switch (err) {
+        syscall.wait(&self.state, old_state, math.maxInt(usize)) catch |err| switch (err) {
             error.WouldBlock => {},
             else => unreachable,
         };

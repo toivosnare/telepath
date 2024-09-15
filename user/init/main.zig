@@ -66,7 +66,7 @@ pub fn main() noreturn {
 }
 
 fn hang() noreturn {
-    syscall.wait(null, 0, 10_000_000_000) catch unreachable;
+    syscall.wait(null, 0, math.maxInt(usize)) catch unreachable;
     unreachable;
 }
 
