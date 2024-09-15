@@ -253,6 +253,7 @@ pub fn receiveRegion(self: *Process, region: *Region, permissions: RegionEntry.P
         re.permissions = permissions;
         re.prev = null;
         re.next = null;
+        region.ref_count += 1;
         return re;
     }
     return error.OutOfMemory;
