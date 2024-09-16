@@ -20,11 +20,15 @@ const Process = @This();
 id: Id,
 parent: ?*Process,
 children: Children,
+state: State,
 region_entries: [MAX_REGIONS]RegionEntry,
 region_entries_head: ?*RegionEntry,
 page_table: PageTable.Ptr,
 context: Context,
-wait_reason: WaitReason,
+wait_reason_count: usize,
+wait_reasons: [MAX_WAIT_REASONS]WaitReason,
+wait_reasons_user: []libt.syscall.WaitReason,
+wait_all: bool,
 wait_end_time: u64,
 scheduling_prev: ?*Process,
 scheduling_next: ?*Process,
@@ -33,9 +37,16 @@ wait_next: ?*Process,
 
 const MAX_CHILDREN = 16;
 const MAX_REGIONS = 16;
+const MAX_WAIT_REASONS = 8;
 
 pub const Id = usize;
 pub const Children = std.BoundedArray(*Process, MAX_CHILDREN);
+pub const State = enum {
+    invalid,
+    ready,
+    waiting,
+    running,
+};
 pub const RegionEntry = struct {
     region: ?*Region,
     start_address: ?UserVirtualAddress,
@@ -117,15 +128,19 @@ pub const Context = extern struct {
     }
 };
 
-pub const WaitReason = union(Tag) {
-    pub const Tag = enum {
-        none,
-        futex,
-        child_process,
-    };
-    none: void,
-    futex: PhysicalAddress,
-    child_process: Process.Id,
+pub const WaitReason = struct {
+    completed: bool,
+    result: usize,
+    tag: union(Tag) {
+        pub const Tag = enum {
+            none,
+            futex,
+            child_process,
+        };
+        none: void,
+        futex: PhysicalAddress,
+        child_process: Process.Id,
+    },
 };
 
 pub fn allocateRegion(
@@ -332,6 +347,115 @@ pub fn handlePageFault(self: *Process, faulting_address: UserVirtualAddress) nor
     }
 
     proc.scheduleCurrent(self);
+}
+
+pub fn wait(self: *Process, reason: *libt.syscall.WaitReason) !void {
+    if (reason.tag == .futex) {
+        const virtual_address = @intFromPtr(reason.payload.futex.address);
+        const expected_value = reason.payload.futex.expected_value;
+        try self.waitFutex(virtual_address, expected_value);
+    } else if (reason.tag == .child_process) {
+        const child_pid = reason.payload.child_process.pid;
+        try self.waitChildProcess(child_pid);
+    } else {
+        return error.InvalidParameter;
+    }
+}
+
+fn waitFutex(self: *Process, virtual_address: usize, expected_value: u32) !void {
+    if (virtual_address >= mm.user_virtual_end)
+        return error.InvalidParameter;
+    if (!mem.isAligned(virtual_address, @alignOf(u32)))
+        return error.InvalidParameter;
+    if (virtual_address == 0)
+        return error.InvalidParameter;
+
+    const physical_address = self.page_table.translate(virtual_address) catch return error.InvalidParameter;
+    const actual_value = @as(*u32, @ptrFromInt(virtual_address)).*;
+    if (actual_value != expected_value)
+        return error.WouldBlock;
+
+    self.wait_reasons[self.wait_reason_count].tag = .{ .futex = physical_address };
+    self.wait_reason_count += 1;
+}
+
+fn waitChildProcess(self: *Process, child_pid: Process.Id) !void {
+    if (self.hasChildWithId(child_pid) == null)
+        return error.NoPermission;
+
+    self.wait_reasons[self.wait_reason_count].tag = .{ .child_process = child_pid };
+    self.wait_reason_count += 1;
+}
+
+pub fn clearWait(self: *Process) void {
+    self.wait_reason_count = 0;
+    for (&self.wait_reasons) |*wait_reason| {
+        wait_reason.completed = false;
+        wait_reason.result = 0;
+        wait_reason.tag = .{ .none = {} };
+    }
+    self.wait_reasons_user = undefined;
+    self.wait_all = false;
+}
+
+fn waitReasons(self: *Process) []WaitReason {
+    return (&self.wait_reasons)[0..self.wait_reason_count];
+}
+
+pub fn checkWaitFutex(self: *Process, address: PhysicalAddress) struct { bool, usize } {
+    var completed: bool = true;
+    var futeces_woken: usize = 0;
+
+    for (self.waitReasons()) |*wait_reason| {
+        if (!wait_reason.completed) {
+            if (wait_reason.tag == .futex and wait_reason.tag.futex == address) {
+                wait_reason.completed = true;
+                wait_reason.result = 0;
+                futeces_woken += 1;
+            } else {
+                completed = false;
+            }
+        }
+    }
+    return .{ completed, futeces_woken };
+}
+
+pub fn checkWaitChildProcess(self: *Process, child_pid: Process.Id, exit_code: usize) bool {
+    var completed: bool = true;
+
+    for (self.waitReasons()) |*wait_reason| {
+        if (!wait_reason.completed) {
+            if (wait_reason.tag == .child_process and wait_reason.tag.child_process == child_pid) {
+                wait_reason.completed = true;
+                wait_reason.result = exit_code;
+            } else {
+                completed = false;
+            }
+        }
+    }
+    return completed;
+}
+
+pub fn waitComplete(self: *Process) void {
+    if (self.wait_reason_count == 0)
+        return;
+
+    if (self.wait_all) {
+        for (self.waitReasons(), self.wait_reasons_user) |*kernel, *user| {
+            assert(kernel.completed == true);
+            user.result = kernel.result;
+        }
+        self.context.a0 = self.wait_reason_count;
+    } else {
+        for (0.., self.waitReasons(), self.wait_reasons_user) |index, *kernel, *user| {
+            if (kernel.completed) {
+                user.result = kernel.result;
+                self.context.a0 = index;
+                break;
+            }
+        }
+    }
+    self.clearWait();
 }
 
 pub fn hasRegion(self: *Process, region: *const Region) ?*RegionEntry {

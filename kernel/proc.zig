@@ -41,12 +41,12 @@ pub fn init() *Process {
         p.id = 0;
         p.parent = null;
         p.children = Process.Children.init(0) catch unreachable;
+        p.state = .invalid;
         for (&p.region_entries) |*re| {
             re.region = null;
         }
         p.region_entries_head = null;
-        p.wait_reason = .{ .none = {} };
-        p.wait_end_time = 0;
+        p.clearWait();
         p.scheduling_prev = null;
         p.scheduling_next = null;
         p.wait_prev = null;
@@ -55,6 +55,7 @@ pub fn init() *Process {
 
     const init_process = &table[0];
     init_process.id = 1;
+    init_process.state = .ready;
     init_process.page_table = @ptrCast(mm.page_allocator.allocate(0) catch @panic("OOM"));
     @memset(mem.asBytes(init_process.page_table), 0);
     return init_process;
@@ -84,6 +85,7 @@ pub fn allocate() !*Process {
             p.id = next_pid;
             next_pid += 1;
 
+            p.state = .ready;
             p.page_table = @ptrCast(try mm.page_allocator.allocate(0));
             @memset(mem.asBytes(p.page_table), 0);
 
@@ -109,6 +111,7 @@ pub fn free(process: *Process) void {
     process.id = 0;
     process.parent = null;
     process.children.resize(0) catch unreachable;
+    process.state = .invalid;
     for (&process.region_entries) |*region_entry| {
         if (region_entry.region == null)
             continue;
@@ -119,7 +122,7 @@ pub fn free(process: *Process) void {
     // TODO: page table?
     // slef.page_table = ;
     @memset(mem.asBytes(&process.context), 0);
-    process.wait_reason = .{ .none = {} };
+    process.clearWait();
     dequeue(process);
     unwaitTimeout(process);
 }
@@ -130,14 +133,17 @@ pub fn scheduleNext(current_process: ?*Process, hart_index: Hart.Index) noreturn
     if (scheduling_head) |next| {
         log.debug("Scheduling next.", .{});
         dequeue(next);
-        if (current_process) |cur|
+        if (current_process) |cur| {
+            cur.state = .ready;
             enqueue(cur);
+        }
         riscv.satp.write(.{
             .ppn = @bitCast(PhysicalPageNumber.fromPageTable(next.page_table)),
             .asid = 0,
             .mode = .sv39,
         });
         riscv.@"sfence.vma"(null, null);
+        next.waitComplete();
         next.context.hart_index = hart_index;
         next_process = next;
     } else if (current_process != null) {
@@ -151,6 +157,7 @@ pub fn scheduleNext(current_process: ?*Process, hart_index: Hart.Index) noreturn
 
     if (current_process == null)
         riscv.sstatus.clear(.spp);
+    next_process.state = .running;
     sbi.time.setTimer(riscv.time.read() + ticks_per_ns * quantum_ns);
     returnToUserspace(&next_process.context);
 }
@@ -193,6 +200,10 @@ fn dequeue(process: *Process) void {
 pub fn waitTimeout(process: *Process, timeout_ns: u64) void {
     assert(process.wait_prev == null);
     assert(process.wait_next == null);
+
+    if (timeout_ns == math.maxInt(u64))
+        return;
+
     // TODO: Can overflow?
     process.wait_end_time = riscv.time.read() + ticks_per_ns * timeout_ns;
 
@@ -234,29 +245,6 @@ fn unwaitTimeout(process: *Process) void {
     process.wait_end_time = 0;
 }
 
-pub fn waitFutex(process: *Process, virtual_address: usize, expected_value: u32) !void {
-    if (virtual_address >= mm.user_virtual_end)
-        return error.InvalidParameter;
-    if (!mem.isAligned(virtual_address, @alignOf(u32)))
-        return error.InvalidParameter;
-    if (virtual_address == 0)
-        return error.InvalidParameter;
-
-    const physical_address = process.page_table.translate(virtual_address) catch return error.InvalidParameter;
-    const actual_value = @as(*u32, @ptrFromInt(virtual_address)).*;
-    if (actual_value != expected_value)
-        return error.WouldBlock;
-
-    process.wait_reason = .{ .futex = physical_address };
-}
-
-pub fn waitChildProcess(process: *Process, child_pid: Process.Id) !void {
-    if (process.hasChildWithId(child_pid) == null)
-        return error.NoPermission;
-
-    process.wait_reason = .{ .child_process = child_pid };
-}
-
 pub fn checkWaitTimeout(time: u64) void {
     var process: ?*Process = wait_head;
     while (process) |p| {
@@ -267,8 +255,9 @@ pub fn checkWaitTimeout(time: u64) void {
         }
         process = p.wait_next;
 
+        assert(p.state == .waiting);
         p.context.a0 = libt.syscall.packResult(error.Timeout);
-        p.wait_reason = .{ .none = {} };
+        p.clearWait();
         p.wait_prev = null;
         p.wait_next = null;
         p.wait_end_time = 0;
@@ -285,22 +274,26 @@ pub fn checkWaitFutex(address: PhysicalAddress, waiter_count: usize) usize {
     for (&table) |*p| {
         if (w == 0)
             break;
-        if (p.wait_reason == .futex and p.wait_reason.futex == address) {
-            p.context.a0 = 0;
-            p.wait_reason = .{ .none = {} };
+        if (p.state != .waiting)
+            continue;
+
+        const completed, const futeces_woken = p.checkWaitFutex(address);
+        if (completed) {
+            p.state = .ready;
             unwaitTimeout(p);
             enqueue(p);
-            w -= 1;
         }
+        w -= futeces_woken;
     }
     return waiter_count - w;
 }
 
 pub fn checkWaitChildProcess(child: *Process, exit_code: usize) void {
     if (child.parent) |parent| {
-        if (parent.wait_reason == .child_process and parent.wait_reason.child_process == child.id) {
-            parent.context.a0 = exit_code;
-            parent.wait_reason = .{ .none = {} };
+        if (parent.state != .waiting)
+            return;
+        if (parent.checkWaitChildProcess(child.id, exit_code)) {
+            parent.state = .ready;
             unwaitTimeout(parent);
             enqueue(parent);
         }

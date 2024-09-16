@@ -205,31 +205,33 @@ pub fn free(process: *Process) FreeError!usize {
     return 0;
 }
 
-// TODO: Allow waiting on multiple.
 // TODO: Allow waiting on interrupts.
 pub const WaitError = libt.syscall.WaitError;
 pub fn wait(process: *Process) WaitError!usize {
-    const wait_reason_int = process.context.a1;
-    const timeout_ns = process.context.a2;
+    const reasons_count = process.context.a1;
+    const reasons_int = process.context.a2;
     log.debug("Process with ID {d} is waiting.", .{process.id});
 
-    if (wait_reason_int != 0) {
-        const wait_reason: *const libt.syscall.WaitReason = @ptrFromInt(wait_reason_int);
+    assert(process.wait_reason_count == 0);
 
-        if (wait_reason.tag == .futex) {
-            const virtual_address = @intFromPtr(wait_reason.payload.futex.address);
-            const expected_value = wait_reason.payload.futex.expected_value;
-            try proc.waitFutex(process, virtual_address, expected_value);
-        } else if (wait_reason.tag == .child_process) {
-            const child_pid = wait_reason.payload.child_process.pid;
-            try proc.waitChildProcess(process, child_pid);
-        } else {
-            return error.InvalidParameter;
+    if (reasons_count != 0 and reasons_int != 0) {
+        const reasons_start: [*]libt.syscall.WaitReason = @ptrFromInt(reasons_int);
+        const reasons: []libt.syscall.WaitReason = reasons_start[0..reasons_count];
+
+        for (0.., reasons) |index, *reason| {
+            process.wait(reason) catch |err| {
+                reason.result = libt.syscall.packResult(err);
+                process.clearWait();
+                return index;
+            };
         }
+        process.wait_reasons_user = reasons;
+        process.wait_all = process.context.a3 != 0;
     }
+    process.state = .waiting;
 
-    if (timeout_ns != math.maxInt(usize))
-        proc.waitTimeout(process, timeout_ns);
+    const timeout_ns = process.context.a4;
+    proc.waitTimeout(process, timeout_ns);
     proc.scheduleNext(null, process.context.hart_index);
 }
 

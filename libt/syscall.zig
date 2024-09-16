@@ -38,7 +38,7 @@ pub fn packResult(result: Error!usize) usize {
     }
 }
 
-fn unpackResult(comptime E: type, a0: usize) E!usize {
+pub fn unpackResult(comptime E: type, a0: usize) E!usize {
     const signed: isize = @bitCast(a0);
     const result = switch (signed) {
         -1 => error.OutOfMemory,
@@ -126,8 +126,12 @@ pub fn free(region: usize) FreeError!void {
 }
 
 pub const WaitError = error{ InvalidParameter, WouldBlock, Timeout, NoPermission, Killed };
-pub fn wait(reason: ?*const WaitReason, timeout_ns: usize) WaitError!usize {
-    return unpackResult(WaitError, syscall2(.wait, @intFromPtr(reason), timeout_ns));
+pub fn wait(reasons: ?[]WaitReason, wait_all: bool, timeout_ns: usize) WaitError!usize {
+    const count, const addr = if (reasons) |r|
+        .{ r.len, @intFromPtr(r.ptr) }
+    else
+        .{ 0, 0 };
+    return unpackResult(WaitError, syscall4(.wait, count, addr, @intFromBool(wait_all), timeout_ns));
 }
 
 pub const WakeError = error{InvalidParameter};
@@ -155,6 +159,7 @@ pub const WaitReason = extern struct {
         futex: Futex,
         child_process: ChildProcess,
     },
+    result: usize = undefined,
     tag: Tag,
     pub const Futex = extern struct {
         address: *const atomic.Value(u32),
@@ -203,6 +208,18 @@ inline fn syscall3(id: Id, arg1: usize, arg2: usize, arg3: usize) usize {
           [arg1] "{a1}" (arg1),
           [arg2] "{a2}" (arg2),
           [arg3] "{a3}" (arg3),
+        : "memory"
+    );
+}
+
+inline fn syscall4(id: Id, arg1: usize, arg2: usize, arg3: usize, arg4: usize) usize {
+    return asm volatile ("ecall"
+        : [ret] "={a0}" (-> usize),
+        : [id] "{a0}" (@intFromEnum(id)),
+          [arg1] "{a1}" (arg1),
+          [arg2] "{a2}" (arg2),
+          [arg3] "{a3}" (arg3),
+          [arg4] "{a4}" (arg4),
         : "memory"
     );
 }
