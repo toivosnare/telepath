@@ -63,3 +63,24 @@ pub const Condvar = extern struct {
         _ = syscall.wake(&self.state, count_int) catch unreachable;
     }
 };
+
+pub const Spinlock = extern struct {
+    state: atomic.Value(u8) = atomic.Value(u8).init(unlocked),
+
+    const unlocked: u8 = 0;
+    const locked: u8 = 1;
+
+    pub fn lock(self: *Spinlock) void {
+        while (!self.tryLock()) {
+            atomic.spinLoopHint();
+        }
+    }
+
+    pub fn tryLock(self: *Spinlock) bool {
+        return self.state.cmpxchgWeak(unlocked, locked, .acquire, .monotonic) == null;
+    }
+
+    pub fn unlock(self: *Spinlock) void {
+        self.state.store(unlocked, .release);
+    }
+};
