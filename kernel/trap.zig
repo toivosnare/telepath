@@ -39,6 +39,14 @@ export fn handleTrap2(context: ?*Process.Context, hart_index: proc.Hart.Index) n
     const current_process = if (context) |c| c.process() else null;
     const scause = riscv.scause.read();
 
+    if (current_process) |cp| {
+        cp.lock.lock();
+        if (cp.killed) {
+            proc.free(cp);
+        }
+        cp.lock.unlock();
+    }
+
     if (scause.interrupt) {
         handleInterrupt(scause.code.interrupt, current_process, hart_index);
     } else {
@@ -55,8 +63,8 @@ fn handleInterrupt(code: riscv.scause.InterruptCode, current_process: ?*Process,
 }
 
 fn handleTimerInterrupt(current_process: ?*Process, hart_index: proc.Hart.Index) noreturn {
-    proc.checkWaitTimeout(riscv.time.read());
-    proc.scheduleNext(current_process, hart_index);
+    proc.timeout.check(riscv.time.read());
+    proc.scheduler.scheduleNext(current_process, hart_index);
 }
 
 fn handleException(code: riscv.scause.ExceptionCode, current_process: ?*Process) noreturn {
@@ -82,7 +90,7 @@ fn handleSyscall(current_process: *Process) noreturn {
     const syscall_id = meta.intToEnum(libt.syscall.Id, syscall_id_int) catch {
         log.warn("Invalid syscall ID {d}", .{syscall_id_int});
         current_process.context.a0 = libt.syscall.packResult(error.InvalidParameter);
-        proc.scheduleCurrent(current_process);
+        proc.scheduler.scheduleCurrent(current_process);
     };
     const result = switch (syscall_id) {
         .exit => syscall.exit(current_process),
@@ -100,5 +108,5 @@ fn handleSyscall(current_process: *Process) noreturn {
         .wake => syscall.wake(current_process),
     };
     current_process.context.a0 = libt.syscall.packResult(result);
-    proc.scheduleCurrent(current_process);
+    proc.scheduler.scheduleCurrent(current_process);
 }

@@ -178,7 +178,7 @@ export fn main(hart_index: Hart.Index) noreturn {
     mm.page_allocator.onAddressTranslationEnabled();
     proc.onAddressTranslationEnabled();
     log.info("Address translation enabled for boot hart.", .{});
-    proc.scheduleNext(null, hart_index);
+    proc.scheduler.scheduleNext(null, hart_index);
 }
 
 pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {

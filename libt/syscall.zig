@@ -32,7 +32,7 @@ pub fn packResult(result: Error!usize) usize {
             error.Exists => -5,
             error.WouldBlock => -6,
             error.Timeout => -7,
-            error.Killed => -8,
+            error.Crashed => -8,
         };
         return @bitCast(signed);
     }
@@ -48,7 +48,7 @@ pub fn unpackResult(comptime E: type, a0: usize) E!usize {
         -5 => error.Exists,
         -6 => error.WouldBlock,
         -7 => error.Timeout,
-        -8 => error.Killed,
+        -8 => error.Crashed,
         else => a0,
     };
     return @errorCast(result);
@@ -125,7 +125,7 @@ pub fn free(region: usize) FreeError!void {
     _ = unpackResult(FreeError, syscall1(.free, region)) catch |err| return err;
 }
 
-pub const WaitError = error{ InvalidParameter, WouldBlock, Timeout, NoPermission, Killed };
+pub const WaitError = error{ InvalidParameter, WouldBlock, Timeout, NoPermission, Crashed };
 pub fn wait(reasons: ?[]WaitReason, wait_all: bool, timeout_ns: usize) WaitError!usize {
     const count, const addr = if (reasons) |r|
         .{ r.len, @intFromPtr(r.ptr) }
