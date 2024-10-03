@@ -25,6 +25,7 @@ const PhysicalPageNumber = mm.PhysicalPageNumber;
 const Process = proc.Process;
 const Hart = proc.Hart;
 const tix = libt.tix;
+const Spinlock = libt.sync.Spinlock;
 
 pub const std_options: std.Options = .{
     .log_level = .debug,
@@ -198,8 +199,12 @@ pub fn logFn(
 }
 
 var writer: std.io.AnyWriter = .{ .context = undefined, .writeFn = writeFn };
+var writer_lock: Spinlock = .{};
 
 fn writeFn(_: *const anyopaque, bytes: []const u8) !usize {
+    writer_lock.lock();
+    defer writer_lock.unlock();
+
     for (bytes) |b| {
         if (sbi.legacy.consolePutChar(b) != .SUCCESS) @panic("consolePutChar");
     }
