@@ -5,6 +5,8 @@ const PhysicalAddress = mm.PhysicalAddress;
 const Page = mm.Page;
 const PageFrameSlice = mm.PageFrameSlice;
 const PageSlice = mm.PageSlice;
+const libt = @import("libt");
+const Spinlock = libt.sync.Spinlock;
 const Region = @This();
 
 // Ref count of zero implies that the region is not in use.
@@ -12,6 +14,7 @@ ref_count: usize,
 allocation: PageFrameSlice,
 size: usize,
 mmio: bool,
+lock: Spinlock,
 
 pub const Index = usize;
 pub const MAX_REGIONS = 128;
@@ -20,19 +23,20 @@ pub var table: [MAX_REGIONS]Region = undefined;
 pub fn init() void {
     for (&table) |*r| {
         r.ref_count = 0;
+        r.lock = .{};
     }
-}
-
-pub fn findFree() !*Region {
-    for (&table) |*r| {
-        if (r.isFree())
-            return r;
-    }
-    return error.OutOfMemory;
 }
 
 pub fn allocate(size: usize, physical_address: PhysicalAddress) !*Region {
-    const region = try findFree();
+    const region = for (&table) |*r| {
+        r.lock.lock();
+        if (r.ref_count == 0)
+            break r;
+        r.lock.unlock();
+    } else {
+        return error.OutOfMemory;
+    };
+    defer region.lock.unlock();
 
     // TODO: it is not possible to allocate physical address 0?
     if (physical_address == 0) {
@@ -54,7 +58,14 @@ pub fn allocate(size: usize, physical_address: PhysicalAddress) !*Region {
     return region;
 }
 
-pub fn free(self: *Region) void {
+pub fn ref(self: *Region) void {
+    self.lock.lock();
+    self.ref_count += 1;
+    self.lock.unlock();
+}
+
+pub fn unref(self: *Region) void {
+    self.lock.lock();
     self.ref_count -= 1;
     if (self.ref_count == 0 and !self.mmio) {
         var logical: PageSlice = undefined;
@@ -62,13 +73,23 @@ pub fn free(self: *Region) void {
         logical.len = self.allocation.len;
         mm.page_allocator.free(logical);
     }
+    self.lock.unlock();
 }
 
-pub fn isFree(self: Region) bool {
-    return self.ref_count == 0;
+pub fn refCount(self: *Region) usize {
+    self.lock.lock();
+    defer self.lock.unlock();
+    return self.ref_count;
 }
 
-pub fn sizeInBytes(self: Region) usize {
+pub fn isFree(self: *Region) bool {
+    return self.refCount() == 0;
+}
+
+pub fn sizeInBytes(self: *Region) usize {
+    self.lock.lock();
+    defer self.lock.unlock();
+
     return self.size * @sizeOf(Page);
 }
 

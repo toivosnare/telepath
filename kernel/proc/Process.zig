@@ -280,7 +280,7 @@ pub fn receiveRegion(self: *Process, region: *Region, permissions: RegionEntry.P
         re.permissions = permissions;
         re.prev = null;
         re.next = null;
-        region.ref_count += 1;
+        region.ref();
         return re;
     }
     return error.OutOfMemory;
@@ -313,7 +313,7 @@ pub fn freeRegionEntry(self: *Process, region_entry: *RegionEntry) !void {
     if (region_entry.start_address != null)
         return error.Exists;
     assert(region_entry.region != null);
-    region_entry.region.?.free();
+    region_entry.region.?.unref();
     region_entry.region = null;
 }
 
