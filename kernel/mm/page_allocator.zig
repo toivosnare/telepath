@@ -3,6 +3,8 @@ const assert = std.debug.assert;
 const mm = @import("../mm.zig");
 const mem = std.mem;
 const log = std.log;
+const libt = @import("libt");
+const Spinlock = libt.sync.Spinlock;
 const Page = mm.Page;
 const PageSlice = mm.PageSlice;
 const PageFrameSlice = mm.PageFrameSlice;
@@ -15,6 +17,7 @@ var buckets: *[max_order]Bucket = undefined;
 var bitfield: std.PackedIntSlice(u1) = undefined;
 var pages: PageSlice = undefined;
 var max_nodes: usize = undefined;
+var lock: Spinlock = .{};
 
 const Bucket = struct {
     free_list: Node,
@@ -163,6 +166,9 @@ pub fn init(
 }
 
 pub fn allocate(requested_order: usize) !PageSlice {
+    lock.lock();
+    defer lock.unlock();
+
     log.debug("Allocating node of order {}.", .{requested_order});
     var order = requested_order;
     const node: *Node = while (order < max_order) : (order += 1) {
@@ -187,10 +193,14 @@ pub fn allocate(requested_order: usize) !PageSlice {
     var result: PageSlice = undefined;
     result.ptr = @alignCast(@ptrCast(node));
     result.len = @as(usize, 1) << @intCast(requested_order);
+    @memset(mem.asBytes(result), 0);
     return result;
 }
 
 pub fn free(slice: PageSlice) void {
+    lock.lock();
+    defer lock.unlock();
+
     assert(std.math.isPowerOfTwo(slice.len));
     var order = std.math.log2(slice.len);
     var node: *Node = @ptrCast(slice.ptr);
@@ -209,6 +219,9 @@ pub fn free(slice: PageSlice) void {
 }
 
 pub fn dump() void {
+    lock.lock();
+    defer lock.unlock();
+
     log.debug("Page allocator status:", .{});
     for (0.., buckets) |order, *bucket| {
         log.debug("Order {} free count {}", .{ order, bucket.free_count });
