@@ -76,10 +76,9 @@ fn handleException(code: riscv.scause.ExceptionCode, current_process: ?*Process)
 
     switch (code) {
         .environment_call_from_u_mode => handleSyscall(current_process.?),
-        .instruction_page_fault,
-        .load_page_fault,
-        .store_amo_page_fault,
-        => current_process.?.handlePageFault(stval),
+        .instruction_page_fault => current_process.?.handlePageFault(stval, .execute),
+        .load_page_fault => current_process.?.handlePageFault(stval, .load),
+        .store_amo_page_fault => current_process.?.handlePageFault(stval, .store),
         else => @panic("unhandled exception"),
     }
 }

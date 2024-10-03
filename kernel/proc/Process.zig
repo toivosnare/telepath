@@ -322,8 +322,7 @@ pub fn freeRegionEntry(self: *Process, region_entry: *RegionEntry) !void {
     region_entry.region = null;
 }
 
-// TODO: handle page faults properly.
-pub fn handlePageFault(self: *Process, faulting_address: UserVirtualAddress) noreturn {
+pub fn handlePageFault(self: *Process, faulting_address: UserVirtualAddress, kind: enum { load, store, execute }) noreturn {
     if (faulting_address >= mm.user_virtual_end)
         @panic("non user virtual address faulting");
 
@@ -333,6 +332,13 @@ pub fn handlePageFault(self: *Process, faulting_address: UserVirtualAddress) nor
     while (entry) |e| : (entry = e.next) {
         assert(e.start_address != null);
         if (e.contains(faulting_address)) |corresponding_address| {
+            if (kind == .load and !e.permissions.readable)
+                break;
+            if (kind == .store and !e.permissions.writable)
+                break;
+            if (kind == .execute and !e.permissions.executable)
+                break;
+
             const virtual: ConstPagePtr = @ptrFromInt(mem.alignBackward(UserVirtualAddress, faulting_address, @sizeOf(Page)));
             const physical: ConstPageFramePtr = @ptrFromInt(mem.alignBackward(PhysicalAddress, corresponding_address, @sizeOf(Page)));
             self.page_table.map(virtual, physical, .{
@@ -347,10 +353,9 @@ pub fn handlePageFault(self: *Process, faulting_address: UserVirtualAddress) nor
             self.lock.unlock();
             proc.scheduler.scheduleCurrent(self);
         }
-    } else {
-        self.exit(libt.syscall.packResult(error.Crashed));
-        proc.scheduler.scheduleNext(null, self.context.hart_index);
     }
+    self.exit(libt.syscall.packResult(error.Crashed));
+    proc.scheduler.scheduleNext(null, self.context.hart_index);
 }
 
 pub fn wait(self: *Process, reason: *libt.syscall.WaitReason) !void {
