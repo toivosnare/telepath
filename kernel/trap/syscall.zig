@@ -292,5 +292,5 @@ pub fn wake(process: *Process) WakeError!usize {
     const waiter_count = process.context.a2;
     log.debug("Process with ID {d} is waking {d} waiters waiting on address 0x{x}.", .{ process.id, waiter_count, virtual_address });
 
-    return proc.futex.wake(process, virtual_address, waiter_count);
+    return proc.Futex.wake(process, virtual_address, waiter_count);
 }

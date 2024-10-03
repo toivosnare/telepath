@@ -15,7 +15,7 @@ const ConstPagePtr = mm.ConstPagePtr;
 const PageSlice = mm.PageSlice;
 const ConstPageFramePtr = mm.ConstPageFramePtr;
 const PageTable = mm.PageTable;
-const WaitQueue = proc.futex.WaitQueue;
+const Futex = proc.Futex;
 const Spinlock = libt.sync.Spinlock;
 const Process = @This();
 
@@ -140,17 +140,12 @@ pub const WaitReason = struct {
             child_process,
         };
         none: void,
-        futex: Futex,
-        child_process: ChildProcess,
+        futex: struct {
+            futex: *Futex,
+            next: ?*WaitReason,
+        },
+        child_process: Process.Id,
     },
-
-    pub const Futex = struct {
-        queue: *WaitQueue,
-        next: ?*WaitReason,
-    };
-    pub const ChildProcess = struct {
-        pid: Process.Id,
-    };
 };
 
 pub fn allocateRegion(
@@ -362,7 +357,7 @@ pub fn wait(self: *Process, reason: *libt.syscall.WaitReason) !void {
     if (reason.tag == .futex) {
         const virtual_address = @intFromPtr(reason.payload.futex.address);
         const expected_value = reason.payload.futex.expected_value;
-        try proc.futex.wait(self, virtual_address, expected_value);
+        try proc.Futex.wait(self, virtual_address, expected_value);
     } else if (reason.tag == .child_process) {
         const child_pid = reason.payload.child_process.pid;
         try self.waitChildProcess(child_pid);
@@ -376,7 +371,7 @@ fn waitChildProcess(self: *Process, child_pid: Process.Id) !void {
         return error.NoPermission;
 
     const wait_reason = try self.waitReasonAllocate();
-    wait_reason.payload = .{ .child_process = .{ .pid = child_pid } };
+    wait_reason.payload = .{ .child_process = child_pid };
 }
 
 pub fn waitReasonAllocate(self: *Process) !*WaitReason {
@@ -407,15 +402,14 @@ pub fn waitCheck(self: *Process) void {
 pub fn waitReasonsClear(self: *Process) void {
     for (self.waitReasons()) |*wait_reason| {
         if (wait_reason.payload == .futex) {
-            wait_reason.payload.futex = .{ .queue = undefined, .next = null };
+            const futex = wait_reason.payload.futex.futex;
+            futex.lock.lock();
+            futex.remove(self);
+            futex.lock.unlock();
 
-            const wait_queue = wait_reason.payload.futex.queue;
-            wait_queue.lock.lock();
-            wait_queue.remove(self);
-            // TODO: free wait queue if empty.
-            wait_queue.lock.unlock();
+            wait_reason.payload.futex = .{ .futex = undefined, .next = null };
         } else if (wait_reason.payload == .child_process) {
-            wait_reason.payload.child_process.pid = 0;
+            wait_reason.payload.child_process = 0;
         }
     }
 }
@@ -470,8 +464,8 @@ pub fn exit(self: *Process, exit_code: usize) void {
 
     parent.lock.lock();
     for (parent.waitReasons()) |*wait_reason| {
-        if (!wait_reason.completed and wait_reason.payload == .child_process and wait_reason.payload.child_process.pid == self.id) {
-            wait_reason.payload = .{ .child_process = .{ .pid = 0 } };
+        if (!wait_reason.completed and wait_reason.payload == .child_process and wait_reason.payload.child_process == self.id) {
+            wait_reason.payload = .{ .child_process = 0 };
             wait_reason.completed = true;
             wait_reason.result = exit_code;
         }

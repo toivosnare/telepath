@@ -16,7 +16,7 @@ const PageTable = mm.PageTable;
 
 pub const Process = @import("proc/Process.zig");
 pub const scheduler = @import("proc/scheduler.zig");
-pub const futex = @import("proc/futex.zig");
+pub const Futex = @import("proc/Futex.zig");
 pub const timeout = @import("proc/timeout.zig");
 
 pub const Hart = extern struct {
@@ -77,7 +77,7 @@ pub fn onAddressTranslationEnabled() void {
             re.next = mm.kernelVirtualFromPhysical(re.next.?);
     }
     riscv.sstatus.clear(.spp);
-    futex.init();
+    Futex.init();
     scheduler.enqueue(init_process);
 }
 
