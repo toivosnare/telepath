@@ -29,7 +29,8 @@ pub fn init() void {
 
 pub fn allocate(size: usize, physical_address: PhysicalAddress) !*Region {
     const region = for (&table) |*r| {
-        r.lock.lock();
+        if (!r.lock.tryLock())
+            continue;
         if (r.ref_count == 0)
             break r;
         r.lock.unlock();

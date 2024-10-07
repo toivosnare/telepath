@@ -13,7 +13,6 @@ pub fn exit(process: *Process) noreturn {
     const exit_code = process.context.a1;
     log.debug("Process with PID {d} is exiting with exit code {d}.", .{ process.id, exit_code });
 
-    process.lock.lock();
     process.exit(exit_code);
     proc.scheduler.scheduleNext(null, process.context.hart_index);
 }
@@ -71,25 +70,20 @@ pub fn spawn(process: *Process) SpawnError!usize {
     const stack_pointer = process.context.a6;
     log.debug("Process with ID {d} is spawning with {d} regions and {d} arguments.", .{ process.id, region_amount, argument_amount });
 
-    {
-        process.lock.lock();
-        defer process.lock.unlock();
+    for (region_descriptions) |region_description| {
+        const region = try Region.fromIndex(region_description.region);
+        if (region.isFree())
+            return error.InvalidParameter;
 
-        for (region_descriptions) |region_description| {
-            const region = try Region.fromIndex(region_description.region);
-            if (region.isFree())
-                return error.InvalidParameter;
-
-            const region_entry = process.hasRegion(region) orelse return error.NoPermission;
-            if (region_description.readable and !region_entry.permissions.readable)
-                return error.NoPermission;
-            if (region_description.writable and !region_entry.permissions.writable)
-                return error.NoPermission;
-            if (region_description.executable and !region_entry.permissions.executable)
-                return error.NoPermission;
-        }
-        process.children.ensureUnusedCapacity(1) catch return error.OutOfMemory;
+        const region_entry = process.hasRegion(region) orelse return error.NoPermission;
+        if (region_description.readable and !region_entry.permissions.readable)
+            return error.NoPermission;
+        if (region_description.writable and !region_entry.permissions.writable)
+            return error.NoPermission;
+        if (region_description.executable and !region_entry.permissions.executable)
+            return error.NoPermission;
     }
+    process.children.ensureUnusedCapacity(1) catch return error.OutOfMemory;
 
     const child_process = try proc.allocate();
     {
@@ -119,10 +113,7 @@ pub fn spawn(process: *Process) SpawnError!usize {
         proc.scheduler.enqueue(child_process);
     }
 
-    process.lock.lock();
     process.children.append(child_process) catch unreachable;
-    process.lock.unlock();
-
     return child_process.id;
 }
 
@@ -131,11 +122,10 @@ pub fn kill(process: *Process) KillError!usize {
     const child_pid = process.context.a1;
     log.debug("Process with ID {d} is killing child with ID {d}.", .{ process.id, child_pid });
 
-    process.lock.lock();
-    defer process.lock.unlock();
-
     const child_process = process.hasChildWithId(child_pid) orelse return error.NoPermission;
+    child_process.lock.lock();
     process.kill(child_process);
+    child_process.lock.unlock();
 
     return 0;
 }
@@ -146,9 +136,6 @@ pub fn allocate(process: *Process) AllocateError!usize {
     const permissions: libt.syscall.Permissions = @bitCast(process.context.a2);
     const physical_address = process.context.a3;
     log.debug("Process with ID {d} is allocating region of size {d} with permissions {} at physical address 0x{x}.", .{ process.id, size, permissions, physical_address });
-
-    process.lock.lock();
-    defer process.lock.unlock();
 
     const region_entry = try process.allocateRegion(size, .{
         .readable = permissions.readable,
@@ -166,10 +153,6 @@ pub fn map(process: *Process) MapError!usize {
     log.debug("Process with ID {d} is mapping region {d} at 0x{x}.", .{ process.id, region_index, requested_address });
 
     const region = try Region.fromIndex(region_index);
-
-    process.lock.lock();
-    defer process.lock.unlock();
-
     const actual_address = try process.mapRegion(region, requested_address);
     return actual_address;
 }
@@ -182,28 +165,27 @@ pub fn share(process: *Process) ShareError!usize {
     log.debug("Process with ID {d} is sharing region {d} with process with ID {d} with permissions: {}.", .{ process.id, region_index, recipient_id, permissions });
 
     const region = try Region.fromIndex(region_index);
+    const region_entry = process.hasRegion(region) orelse return error.NoPermission;
+    if (permissions.readable and !region_entry.permissions.readable)
+        return error.NoPermission;
+    if (permissions.writable and !region_entry.permissions.writable)
+        return error.NoPermission;
+    if (permissions.executable and !region_entry.permissions.executable)
+        return error.NoPermission;
 
-    {
-        process.lock.lock();
-        defer process.lock.unlock();
-
-        const region_entry = process.hasRegion(region) orelse return error.NoPermission;
-        if (permissions.readable and !region_entry.permissions.readable)
-            return error.NoPermission;
-        if (permissions.writable and !region_entry.permissions.writable)
-            return error.NoPermission;
-        if (permissions.executable and !region_entry.permissions.executable)
-            return error.NoPermission;
-    }
+    process.lock.unlock();
 
     const recipient = proc.processFromId(recipient_id) orelse return error.InvalidParameter;
-    defer recipient.lock.unlock();
+    {
+        defer recipient.lock.unlock();
+        _ = try recipient.receiveRegion(region, .{
+            .readable = permissions.readable,
+            .writable = permissions.writable,
+            .executable = permissions.executable,
+        });
+    }
 
-    _ = try recipient.receiveRegion(region, .{
-        .readable = permissions.readable,
-        .writable = permissions.writable,
-        .executable = permissions.executable,
-    });
+    process.lock.lock();
     return 0;
 }
 
@@ -213,13 +195,7 @@ pub fn refcount(process: *Process) RefcountError!usize {
     log.debug("Process with ID {d} is getting the reference count of the region {d}.", .{ process.id, region_index });
 
     const region = try Region.fromIndex(region_index);
-
-    {
-        process.lock.lock();
-        defer process.lock.unlock();
-        _ = process.hasRegion(region) orelse return error.NoPermission;
-    }
-
+    _ = process.hasRegion(region) orelse return error.NoPermission;
     return region.refCount();
 }
 
@@ -227,9 +203,6 @@ pub const UnmapError = libt.syscall.UnmapError;
 pub fn unmap(process: *Process) UnmapError!usize {
     const address = process.context.a1;
     log.debug("Process with ID {d} is unmapping region at address {d}.", .{ process.id, address });
-
-    process.lock.lock();
-    defer process.lock.unlock();
 
     const region_entry = process.hasRegionAtAddress(address) orelse return error.InvalidParameter;
     try process.unmapRegionEntry(region_entry);
@@ -242,10 +215,6 @@ pub fn free(process: *Process) FreeError!usize {
     log.debug("Process with ID {d} is freeing region {d}.", .{ process.id, region_index });
 
     const region = try Region.fromIndex(region_index);
-
-    process.lock.lock();
-    defer process.lock.unlock();
-
     const region_entry = process.hasRegion(region) orelse return error.NoPermission;
     try process.freeRegionEntry(region_entry);
     return 0;
@@ -260,29 +229,26 @@ pub fn wait(process: *Process) WaitError!usize {
 
     assert(process.wait_reason_count == 0);
 
-    process.lock.lock();
-    {
-        defer process.lock.unlock();
-        if (reasons_count != 0 and reasons_int != 0) {
-            const reasons_start: [*]libt.syscall.WaitReason = @ptrFromInt(reasons_int);
-            const reasons: []libt.syscall.WaitReason = reasons_start[0..reasons_count];
+    if (reasons_count != 0 and reasons_int != 0) {
+        const reasons_start: [*]libt.syscall.WaitReason = @ptrFromInt(reasons_int);
+        const reasons: []libt.syscall.WaitReason = reasons_start[0..reasons_count];
 
-            for (0.., reasons) |index, *reason| {
-                process.wait(reason) catch |err| {
-                    reason.result = libt.syscall.packResult(err);
-                    process.waitClear();
-                    return index;
-                };
-            }
-            process.wait_reasons_user = reasons;
-            process.wait_all = process.context.a3 != 0;
+        for (0.., reasons) |index, *reason| {
+            process.wait(reason) catch |err| {
+                reason.result = libt.syscall.packResult(err);
+                process.waitClear();
+                return index;
+            };
         }
-
-        const timeout_ns = process.context.a4;
-        proc.timeout.wait(process, timeout_ns);
-        process.state = .waiting;
+        process.wait_reasons_user = reasons;
+        process.wait_all = process.context.a3 != 0;
     }
 
+    const timeout_ns = process.context.a4;
+    proc.timeout.wait(process, timeout_ns);
+    process.state = .waiting;
+
+    process.lock.unlock();
     proc.scheduler.scheduleNext(null, process.context.hart_index);
 }
 

@@ -326,8 +326,6 @@ pub fn handlePageFault(self: *Process, faulting_address: UserVirtualAddress, kin
     if (faulting_address >= mm.user_virtual_end)
         @panic("non user virtual address faulting");
 
-    self.lock.lock();
-
     var entry: ?*RegionEntry = self.region_entries_head;
     while (entry) |e| : (entry = e.next) {
         assert(e.start_address != null);
@@ -350,7 +348,6 @@ pub fn handlePageFault(self: *Process, faulting_address: UserVirtualAddress, kin
                 .global = false,
             }) catch @panic("OOM");
             riscv.@"sfence.vma"(faulting_address, null);
-            self.lock.unlock();
             proc.scheduler.scheduleCurrent(self);
         }
     }
@@ -468,6 +465,16 @@ pub fn exit(self: *Process, exit_code: usize) void {
     self.lock.unlock();
 
     parent.lock.lock();
+    defer parent.lock.unlock();
+
+    self.lock.lock();
+    defer self.lock.unlock();
+
+    if (self.killed) {
+        proc.free(self);
+        return;
+    }
+
     for (parent.waitReasons()) |*wait_reason| {
         if (!wait_reason.completed and wait_reason.payload == .child_process and wait_reason.payload.child_process == self.id) {
             wait_reason.payload = .{ .child_process = 0 };
@@ -477,25 +484,20 @@ pub fn exit(self: *Process, exit_code: usize) void {
     }
     parent.waitCheck();
     parent.kill(self);
-    parent.lock.unlock();
 }
 
 pub fn kill(self: *Process, child: *Process) void {
     const child_index = mem.indexOfScalar(*Process, self.children.constSlice(), child) orelse unreachable;
     _ = self.children.swapRemove(child_index);
-    child.kill2();
+    child.die();
 }
 
-fn kill2(self: *Process) void {
-    self.lock.lock();
-    defer self.lock.unlock();
-
-    assert(!self.killed);
-
-    for (self.children.slice()) |child|
-        child.kill2();
-
-    self.children.resize(0) catch unreachable;
+fn die(self: *Process) void {
+    for (self.children.slice()) |child| {
+        child.lock.lock();
+        child.die();
+        child.lock.unlock();
+    }
 
     if (self.state == .ready) {
         proc.scheduler.remove(self);

@@ -83,7 +83,9 @@ pub fn onAddressTranslationEnabled() void {
 
 pub fn allocate() !*Process {
     for (&table) |*p| {
-        p.lock.lock();
+        if (!p.lock.tryLock())
+            continue;
+
         if (p.state == .invalid) {
             p.id = next_pid.fetchAdd(1, .monotonic);
 

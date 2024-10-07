@@ -35,6 +35,7 @@ pub fn scheduleNext(current_process: ?*Process, hart_index: Hart.Index) noreturn
 
         next.lock.unlock();
 
+        // FIXME: we are not holding current.lock here?
         if (current_process) |current|
             enqueue(current);
 
@@ -80,6 +81,7 @@ fn pop() ?*Process {
 }
 
 pub fn scheduleCurrent(current_process: *Process) noreturn {
+    current_process.lock.unlock();
     returnToUserspace(&current_process.context);
 }
 

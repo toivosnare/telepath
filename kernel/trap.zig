@@ -39,14 +39,6 @@ export fn handleTrap2(context: ?*Process.Context, hart_index: proc.Hart.Index) n
     const current_process = if (context) |c| c.process() else null;
     const scause = riscv.scause.read();
 
-    if (current_process) |cp| {
-        cp.lock.lock();
-        if (cp.killed) {
-            proc.free(cp);
-        }
-        cp.lock.unlock();
-    }
-
     if (scause.interrupt) {
         handleInterrupt(scause.code.interrupt, current_process, hart_index);
     } else {
@@ -64,16 +56,34 @@ fn handleInterrupt(code: riscv.scause.InterruptCode, current_process: ?*Process,
 
 fn handleTimerInterrupt(current_process: ?*Process, hart_index: proc.Hart.Index) noreturn {
     proc.timeout.check(riscv.time.read());
-    proc.scheduler.scheduleNext(current_process, hart_index);
+    const c = if (current_process) |current| blk: {
+        current.lock.lock();
+        defer current.lock.unlock();
+
+        if (current.killed) {
+            proc.free(current);
+            break :blk null;
+        } else {
+            break :blk current;
+        }
+    } else null;
+    proc.scheduler.scheduleNext(c, hart_index);
 }
 
 fn handleException(code: riscv.scause.ExceptionCode, current_process: ?*Process) noreturn {
     if (current_process == null)
         @panic("exception from idle");
+    const process = current_process.?;
 
     const stval = riscv.stval.read();
     log.debug("Exception: code={s}, stval={x}", .{ @tagName(code), stval });
 
+    process.lock.lock();
+    if (process.killed) {
+        proc.free(process);
+        process.lock.unlock();
+        proc.scheduler.scheduleNext(null, process.context.hart_index);
+    }
     switch (code) {
         .instruction_address_misaligned,
         .instruction_access_fault,
@@ -84,13 +94,13 @@ fn handleException(code: riscv.scause.ExceptionCode, current_process: ?*Process)
         .store_amo_address_misaligned,
         .store_amo_access_fault,
         => {
-            current_process.?.exit(libt.syscall.packResult(error.Crashed));
-            proc.scheduler.scheduleNext(null, current_process.?.context.hart_index);
+            process.exit(libt.syscall.packResult(error.Crashed));
+            proc.scheduler.scheduleNext(null, process.context.hart_index);
         },
-        .environment_call_from_u_mode => handleSyscall(current_process.?),
-        .instruction_page_fault => current_process.?.handlePageFault(stval, .execute),
-        .load_page_fault => current_process.?.handlePageFault(stval, .load),
-        .store_amo_page_fault => current_process.?.handlePageFault(stval, .store),
+        .environment_call_from_u_mode => handleSyscall(process),
+        .instruction_page_fault => process.handlePageFault(stval, .execute),
+        .load_page_fault => process.handlePageFault(stval, .load),
+        .store_amo_page_fault => process.handlePageFault(stval, .store),
         else => @panic("unhandled exception"),
     }
 }

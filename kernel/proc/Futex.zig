@@ -70,12 +70,9 @@ pub fn wake(process: *Process, virtual_address: UserVirtualAddress, count: usize
     if (count == 0)
         return error.InvalidParameter;
 
-    process.lock.lock();
-    const physical_address = blk: {
-        defer process.lock.unlock();
-        break :blk process.page_table.translate(virtual_address) catch return error.InvalidParameter;
-    };
+    const physical_address = process.page_table.translate(virtual_address) catch return error.InvalidParameter;
 
+    // FIXME: Maybe unlock process while popping waiters from the queue?
     const futex = futexOf(physical_address, false) catch return 0;
     defer futex.lock.unlock();
 
