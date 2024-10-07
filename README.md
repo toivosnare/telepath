@@ -1,19 +1,19 @@
 # Telepath
 
-Telepath is an Operating System prototype for the RISC-V (RV64G) ISA with:
+Telepath is an Operating System prototype for the RISC-V ISA (RV64G) with:
 
 - Shared memory IPC
 - Message passing IPC via Channels (built on top of shared memory with minimal overhead)
 - Microkernel with user space drivers
 - Capability-based security
-- Preemptive multitasking
+- Symmetric multiprocessing (SMP)
+- Pre-emptive multitasking
 - Round-robin scheduling
 - Futex support
-- Buddy system page allocator.
 
 ## Building
 
-Required software for building is the [Zig](https://ziglang.org) compiler (version 0.13 currently) and the tar archiver (for creating the driver arhive for init). To build the kernel image, run the following command.
+Required software for building is the [Zig](https://ziglang.org) compiler (version 0.13 currently) and the tar archiver (for creating the driver archive for init). To build the kernel image and the init executable (analogous to Linux initramfs), run the following command.
 
 ```
 zig build
@@ -21,7 +21,7 @@ zig build
 
 ## Running
 
-The operating system can be run on the QEMU (qemu-system-riscv64) virtual machine with the following command. 
+The operating system can be run on the QEMU virtual machine (qemu-system-riscv64) with the following command.
 
 ```
 zig build run
