@@ -188,23 +188,23 @@ pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
     }
 }
 
+var log_lock: Spinlock = .{};
+
 pub fn logFn(
     comptime level: std.log.Level,
     comptime scope: @TypeOf(.EnumLiteral),
     comptime format: []const u8,
     args: anytype,
 ) void {
+    log_lock.lock();
+    defer log_lock.unlock();
     const prefix = "[" ++ comptime level.asText() ++ "] " ++ if (scope == std.log.default_log_scope) "" else "(" ++ @tagName(scope) ++ ") ";
     writer.print(prefix ++ format ++ "\n", args) catch return;
 }
 
 var writer: std.io.AnyWriter = .{ .context = undefined, .writeFn = writeFn };
-var writer_lock: Spinlock = .{};
 
 fn writeFn(_: *const anyopaque, bytes: []const u8) !usize {
-    writer_lock.lock();
-    defer writer_lock.unlock();
-
     for (bytes) |b| {
         if (sbi.legacy.consolePutChar(b) != .SUCCESS) @panic("consolePutChar");
     }
