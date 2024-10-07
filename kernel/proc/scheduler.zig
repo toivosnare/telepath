@@ -19,6 +19,7 @@ var head: ?*Process = null;
 var tail: ?*Process = null;
 
 pub fn scheduleNext(current_process: ?*Process, hart_index: Hart.Index) noreturn {
+    log.info("Scheduling on hart index {d}.", .{hart_index});
     const next_process = if (pop()) |next| blk: {
         log.debug("Scheduling next.", .{});
         next.state = .running;

@@ -33,7 +33,7 @@ pub var harts: []Hart = undefined;
 pub const ticks_per_ns: usize = 10;
 const MAX_PROCESSES = 64;
 
-var table: [MAX_PROCESSES]Process = undefined;
+pub var table: [MAX_PROCESSES]Process = undefined;
 var next_pid: atomic.Value(Process.Id) = atomic.Value(Process.Id).init(2);
 
 pub fn init() *Process {

@@ -12,8 +12,10 @@ bootHartEntry:
 .section .text
 .global secondaryHartEntry
 secondaryHartEntry:
+	mv a0, a1
 	la sp, kernel_stack
 	li t0, KERNEL_STACK_SIZE_PER_HART
+	addi a1, a1, 1
 	mul t0, t0, a1
 	add sp, sp, t0
 	j secondaryHartMain
@@ -23,11 +25,6 @@ secondaryHartEntry:
 trampoline:
 	csrw satp, a1
 	sfence.vma
-	la sp, kernel_stack
-	li t0, KERNEL_STACK_SIZE_PER_HART
-	addi t1, a0, 1
-	mul t0, t0, t1
-	add sp, sp, t0
 	add sp, sp, a2
 	la ra, main
 	add ra, ra, a2

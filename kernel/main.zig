@@ -6,6 +6,7 @@ const fdt = @import("fdt.zig");
 const riscv = @import("riscv.zig");
 const libt = @import("libt");
 const sbi = @import("sbi");
+const atomic = std.atomic;
 const log = std.log;
 const math = std.math;
 const assert = std.debug.assert;
@@ -45,8 +46,6 @@ export fn bootHartMain(boot_hart_id: Hart.Id, fdt_physical_start: PhysicalAddres
     const pr = fdt.parse(fdt_physical_start);
     log.debug("harts: {any}", .{proc.harts});
     log.debug("fdt: {any}", .{pr});
-    for (proc.harts[1..], 2..) |*secondary_hart, i|
-        sbi.hsm.hartStart(secondary_hart.id, @intFromPtr(&secondaryHartEntry), i) catch @panic("hartStart");
 
     mm.ram_physical_slice.ptr = @ptrFromInt(mem.alignBackward(PhysicalAddress, pr.ram_physical_start, @sizeOf(Page)));
     mm.ram_physical_slice.len = math.divCeil(usize, pr.ram_size, @sizeOf(Page)) catch unreachable;
@@ -162,22 +161,49 @@ export fn bootHartMain(boot_hart_id: Hart.Id, fdt_physical_start: PhysicalAddres
     trampoline(0, satp, mm.kernel_offset);
 }
 
-extern fn secondaryHartEntry(hart_id: Hart.Id, x: usize) callconv(.Naked) noreturn;
-
-export fn secondaryHartMain(hart_id: Hart.Id) noreturn {
-    log.info("Secondary hart with id {} booting.", .{hart_id});
-    while (true) {
-        asm volatile ("wfi");
-    }
-}
 extern fn trampoline(hart_index: Hart.Index, satp: riscv.satp.Type, kernel_offset: usize) align(@sizeOf(Page)) noreturn;
 
+extern fn secondaryHartEntry(hart_id: Hart.Id, hart_index: Hart.Index) callconv(.Naked) noreturn;
+
+export fn secondaryHartMain(hart_index: Hart.Index) noreturn {
+    trap.init();
+    const init_process = &proc.table[0];
+    const satp: riscv.satp.Type = .{
+        .ppn = @bitCast(PhysicalPageNumber.fromPageTable(init_process.page_table)),
+        .asid = 0,
+        .mode = .sv39,
+    };
+    trampoline(hart_index, satp, mm.kernel_offset);
+}
+
+var harts_ready: atomic.Value(usize) = atomic.Value(usize).init(0);
+
 export fn main(hart_index: Hart.Index) noreturn {
-    writer.writeFn = writeFn;
-    trap.onAddressTranslationEnabled();
-    mm.page_allocator.onAddressTranslationEnabled();
-    proc.onAddressTranslationEnabled();
-    log.info("Address translation enabled for boot hart.", .{});
+    if (hart_index == 0) {
+        writer.writeFn = writeFn;
+        trap.onAddressTranslationEnabled();
+        mm.page_allocator.onAddressTranslationEnabled();
+        proc.onAddressTranslationEnabled();
+        log.info("Address translation enabled for boot hart.", .{});
+
+        for (proc.harts[1..], 1..) |*secondary_hart, i|
+            sbi.hsm.hartStart(secondary_hart.id, @intFromPtr(&secondaryHartEntry), i) catch @panic("hartStart");
+
+        while (harts_ready.load(.monotonic) < proc.harts.len - 1) {}
+
+        log.info("Unmapping trampoline.", .{});
+        const trampoline_page: ConstPageFramePtr = @ptrCast(&trampoline);
+        const init_process = &proc.table[0];
+        init_process.page_table.unmap(trampoline_page);
+
+        _ = harts_ready.fetchAdd(1, .monotonic);
+        log.info("All harts ready.", .{});
+    } else {
+        trap.onAddressTranslationEnabled();
+        _ = harts_ready.fetchAdd(1, .monotonic);
+        log.info("Hart index {d} ready.", .{hart_index});
+        while (harts_ready.load(.monotonic) < proc.harts.len) {}
+    }
     proc.scheduler.scheduleNext(null, hart_index);
 }
 
