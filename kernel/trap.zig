@@ -75,6 +75,18 @@ fn handleException(code: riscv.scause.ExceptionCode, current_process: ?*Process)
     log.debug("Exception: code={s}, stval={x}", .{ @tagName(code), stval });
 
     switch (code) {
+        .instruction_address_misaligned,
+        .instruction_access_fault,
+        .illegal_instruction,
+        .breakpoint,
+        .load_address_misaligned,
+        .load_access_fault,
+        .store_amo_address_misaligned,
+        .store_amo_access_fault,
+        => {
+            current_process.?.exit(libt.syscall.packResult(error.Crashed));
+            proc.scheduler.scheduleNext(null, current_process.?.context.hart_index);
+        },
         .environment_call_from_u_mode => handleSyscall(current_process.?),
         .instruction_page_fault => current_process.?.handlePageFault(stval, .execute),
         .load_page_fault => current_process.?.handlePageFault(stval, .load),
