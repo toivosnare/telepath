@@ -12,7 +12,7 @@ const sbi = @import("sbi");
 const libt = @import("libt");
 const Spinlock = libt.sync.Spinlock;
 
-const quantum_ns: usize = 1_000_000;
+const quantum_ns: usize = 50_000;
 
 var lock: Spinlock = .{};
 var head: ?*Process = null;
