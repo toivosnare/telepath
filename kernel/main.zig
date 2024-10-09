@@ -29,7 +29,6 @@ const tix = libt.tix;
 const Spinlock = libt.sync.Spinlock;
 
 pub const std_options: std.Options = .{
-    .log_level = .debug,
     .logFn = logFn,
 };
 
