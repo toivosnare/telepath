@@ -13,9 +13,13 @@ pub fn build(b: *Build) void {
     const ns16550a = b.dependency("ns16550a", .{
         .optimize = optimize,
     });
+    const @"smp-test" = b.dependency("smp-test", .{
+        .optimize = optimize,
+    });
 
     const drivers = [_]*Step.Compile{
         ns16550a.artifact("ns16550a"),
+        @"smp-test".artifact("smp-test"),
     };
 
     const tar = b.addSystemCommand(&[_][]const u8{ "tar", "--transform=s/.*\\///", "-cPf" });

@@ -1,16 +1,10 @@
 .{
-    .name = "init",
+    .name = "smp-test",
     .version = "0.0.0",
     .minimum_zig_version = "0.11.0",
     .dependencies = .{
         .libt = .{
             .path = "../../libt",
-        },
-        .ns16550a = .{
-            .path = "../ns16550a",
-        },
-        .@"smp-test" = .{
-            .path = "../smp-test",
         },
     },
     .paths = .{

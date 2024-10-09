@@ -5,6 +5,7 @@ const io = std.io;
 const heap = std.heap;
 const math = std.math;
 const mem = std.mem;
+const Allocator = mem.Allocator;
 const libt = @import("libt");
 const syscall = libt.syscall;
 const service = libt.service;
@@ -13,6 +14,7 @@ pub const os = libt;
 
 const stack_size = 0x10;
 const DriverMap = std.StringHashMap([]const u8);
+const ServiceMap = std.AutoHashMap(u32, usize);
 
 export fn _start() callconv(.Naked) noreturn {
     // Save FDT address.
@@ -56,24 +58,25 @@ pub fn main() usize {
         .thread_safe = false,
         .safety = false,
     }){};
-    var driver_map = DriverMap.init(gpa.allocator());
-    populateDriverMap(&driver_map) catch hang();
+    const allocator = gpa.allocator();
 
-    if (driver_map.get("ns16550a")) |elf_file| {
-        const child_pid = loadElf(elf_file) catch hang();
-        const exit_code = libt.waitChildProcess(child_pid, math.maxInt(usize)) catch unreachable;
-        return exit_code;
-    }
+    var driver_map = DriverMap.init(allocator);
+    populateDriverMap(&driver_map, allocator) catch return 1;
 
-    hang();
-}
+    var service_map = ServiceMap.init(allocator);
 
-fn hang() noreturn {
+    const serial_elf = driver_map.get("ns16550a") orelse return 2;
+    _ = loadElf(serial_elf, &service_map) catch return 3;
+
+    const smp_test_elf = driver_map.get("smp-test") orelse return 4;
+    _ = loadElf(smp_test_elf, &service_map) catch return 5;
+    _ = loadElf(smp_test_elf, &service_map) catch return 6;
+
     libt.sleep(math.maxInt(usize)) catch unreachable;
     unreachable;
 }
 
-fn populateDriverMap(driver_map: *DriverMap) !void {
+fn populateDriverMap(driver_map: *DriverMap, allocator: Allocator) !void {
     const driver_archive = @embedFile("driver_archive.tar");
 
     var stream = io.fixedBufferStream(driver_archive);
@@ -86,14 +89,15 @@ fn populateDriverMap(driver_map: *DriverMap) !void {
 
     while (try it.next()) |file| {
         const file_data = driver_archive[stream.pos..][0..file.size];
-        try driver_map.put(file.name, file_data);
+        const file_name = try allocator.dupe(u8, file.name);
+        try driver_map.put(file_name, file_data);
     }
 }
 
 const Regions = std.BoundedArray(syscall.RegionDescription, 8);
 const Arguments = std.BoundedArray(usize, 7);
 
-fn loadElf(elf_bytes: []const u8) !usize {
+fn loadElf(elf_bytes: []const u8, service_map: *ServiceMap) !usize {
     var stream = io.fixedBufferStream(elf_bytes);
     const header = try elf.Header.read(&stream);
     if (header.machine != .RISCV)
@@ -109,7 +113,7 @@ fn loadElf(elf_bytes: []const u8) !usize {
         if (program_header.p_type == elf.PT_LOAD) {
             try handleLoadSegment(program_header, &regions, elf_bytes);
         } else if (program_header.p_type >= elf.PT_LOOS and program_header.p_type <= elf.PT_HIOS) {
-            try handleServiceSegment(program_header, &regions, &arguments);
+            try handleServiceSegment(program_header, &regions, &arguments, service_map);
         }
     }
 
@@ -147,15 +151,15 @@ fn handleLoadSegment(header: elf.Elf64_Phdr, regions: *Regions, elf_bytes: []con
     _ = syscall.unmap(address) catch unreachable;
 }
 
-fn handleServiceSegment(header: elf.Elf64_Phdr, regions: *Regions, arguments: *Arguments) !void {
+fn handleServiceSegment(header: elf.Elf64_Phdr, regions: *Regions, arguments: *Arguments, service_map: *ServiceMap) !void {
     const start_address = mem.alignBackward(usize, header.p_vaddr, mem.page_size);
     const end_address = mem.alignForward(usize, header.p_vaddr + header.p_memsz, mem.page_size);
     const size = (end_address - start_address) / mem.page_size;
 
     const region = try if (header.p_flags & service.Flags.mask_p != 0)
-        handleProvidedServiceSegment(size, header.p_type)
+        handleProvidedServiceSegment(size, header.p_type, service_map)
     else
-        handleConsumedServiceSegment();
+        handleConsumedServiceSegment(header.p_type, service_map);
 
     var rd: *syscall.RegionDescription = try regions.addOne();
     rd.region = region;
@@ -166,18 +170,12 @@ fn handleServiceSegment(header: elf.Elf64_Phdr, regions: *Regions, arguments: *A
     try arguments.append(region);
 }
 
-fn handleProvidedServiceSegment(size: usize, id: usize) !usize {
+fn handleProvidedServiceSegment(size: usize, id: u32, service_map: *ServiceMap) !usize {
     const region = try syscall.allocate(size, .{ .readable = true, .writable = true, .executable = true }, null);
-
-    if (id == service.hash(service.byte_stream)) {
-        const byte_stream: *align(mem.page_size) service.byte_stream.consume.Type = @ptrCast(try syscall.map(region, null));
-        byte_stream.writeSlice("Hello from init!\n");
-        _ = try syscall.unmap(@ptrCast(byte_stream));
-    }
-
+    try service_map.put(id, region);
     return region;
 }
 
-fn handleConsumedServiceSegment() !usize {
-    return error.NotImplemented;
+fn handleConsumedServiceSegment(id: u32, service_map: *ServiceMap) !usize {
+    return service_map.get(id) orelse return error.ServiceMissing;
 }
