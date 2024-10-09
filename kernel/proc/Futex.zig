@@ -54,6 +54,8 @@ pub fn wait(process: *Process, virtual_address: UserVirtualAddress, expected_val
     const physical_address = process.page_table.translate(virtual_address) catch return error.InvalidParameter;
     const futex = try futexOf(physical_address, true);
     defer futex.lock.unlock();
+    errdefer if (futex.isEmpty())
+        futex.free();
 
     const actual_value = @as(*u32, @ptrFromInt(virtual_address)).*;
     if (actual_value != expected_value)
