@@ -138,5 +138,5 @@ pub fn processFromId(id: Process.Id) ?*Process {
 
 // Black magic.
 pub fn processFromWaitReason(wait_reason: *Process.WaitReason) *Process {
-    return @ptrFromInt(mem.alignBackward(KernelVirtualAddress, @intFromPtr(wait_reason) - @intFromPtr(&table[0]), @sizeOf(Process)) + @intFromPtr(&table[0]));
+    return @ptrFromInt(mem.alignBackwardAnyAlign(@intFromPtr(wait_reason) - @intFromPtr(&table[0]), @sizeOf(Process)) + @intFromPtr(&table[0]));
 }

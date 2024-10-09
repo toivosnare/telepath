@@ -403,7 +403,7 @@ pub fn waitCheck(self: *Process) void {
 
 pub fn waitReasonsClear(self: *Process) void {
     for (self.waitReasons()) |*wait_reason| {
-        if (wait_reason.payload == .futex) {
+        if (wait_reason.payload == .futex and !wait_reason.completed) {
             const futex = wait_reason.payload.futex.futex;
             futex.lock.lock();
             futex.remove(self);

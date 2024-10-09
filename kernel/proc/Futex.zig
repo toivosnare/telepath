@@ -134,6 +134,7 @@ fn futexOf(address: PhysicalAddress, allocate: bool) !*Futex {
     if (free_list_head) |head| {
         free_list_head = head.next;
         head.next = bucket.*;
+        head.address = address;
         bucket.* = head;
         head.lock.lock();
         return head;
