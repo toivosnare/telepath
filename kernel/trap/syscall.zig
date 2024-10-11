@@ -220,25 +220,23 @@ pub fn share(process: *Process) ShareError!usize {
         return error.NoPermission;
     }
 
+    process.lock.unlock();
+    defer process.lock.lock();
+
     const recipient = proc.processFromId(recipient_id) orelse {
         log.warn("Process id={d} tried to share Region index={d} to Process with invalid id={d}", .{ process.id, region_index, recipient_id });
         return error.InvalidParameter;
     };
+    defer recipient.lock.unlock();
 
     log.debug("Process id={d} is sharing Region index={d} with Process id={d} with permissions={}", .{ process.id, region_index, recipient_id, permissions });
 
-    // TODO: fix locking.
-    process.lock.unlock();
-    {
-        defer recipient.lock.unlock();
-        _ = try recipient.receiveRegion(region, .{
-            .readable = permissions.readable,
-            .writable = permissions.writable,
-            .executable = permissions.executable,
-        });
-    }
+    _ = try recipient.receiveRegion(region, .{
+        .readable = permissions.readable,
+        .writable = permissions.writable,
+        .executable = permissions.executable,
+    });
 
-    process.lock.lock();
     return 0;
 }
 
