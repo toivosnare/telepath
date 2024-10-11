@@ -38,6 +38,18 @@ extern const kernel_linker_end: anyopaque;
 export fn bootHartMain(boot_hart_id: Hart.Id, fdt_physical_start: PhysicalAddress, kernel_physical_start: PhysicalAddress) noreturn {
     trap.init();
 
+    log.info(
+        \\
+        \\
+        \\  ████████╗███████╗██╗     ███████╗██████╗  █████╗ ████████╗██╗  ██╗
+        \\  ╚══██╔══╝██╔════╝██║     ██╔════╝██╔══██╗██╔══██╗╚══██╔══╝██║  ██║
+        \\     ██║   █████╗  ██║     █████╗  ██████╔╝███████║   ██║   ███████║
+        \\     ██║   ██╔══╝  ██║     ██╔══╝  ██╔═══╝ ██╔══██║   ██║   ██╔══██║
+        \\     ██║   ███████╗███████╗███████╗██║     ██║  ██║   ██║   ██║  ██║
+        \\     ╚═╝   ╚══════╝╚══════╝╚══════╝╚═╝     ╚═╝  ╚═╝   ╚═╝   ╚═╝  ╚═╝
+        \\
+    , .{});
+
     log.info("Booting kernel on boot hart id={d}", .{boot_hart_id});
     proc.hart_array[0].id = boot_hart_id;
 
