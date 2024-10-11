@@ -141,7 +141,7 @@ pub const WaitReason = struct {
         };
         none: void,
         futex: struct {
-            futex: *Futex,
+            address: PhysicalAddress,
             next: ?*WaitReason,
         },
         child_process: Process.Id,
@@ -355,22 +355,11 @@ pub fn handlePageFault(self: *Process, faulting_address: UserVirtualAddress, kin
     proc.scheduler.scheduleNext(null, self.context.hart_index);
 }
 
-pub fn wait(self: *Process, reason: *libt.syscall.WaitReason) !void {
-    if (reason.tag == .futex) {
-        const virtual_address = @intFromPtr(reason.payload.futex.address);
-        const expected_value = reason.payload.futex.expected_value;
-        try proc.Futex.wait(self, virtual_address, expected_value);
-    } else if (reason.tag == .child_process) {
-        const child_pid = reason.payload.child_process.pid;
-        try self.waitChildProcess(child_pid);
-    } else {
-        return error.InvalidParameter;
-    }
-}
-
-fn waitChildProcess(self: *Process, child_pid: Process.Id) !void {
-    if (self.hasChildWithId(child_pid) == null)
+pub fn waitChildProcess(self: *Process, child_pid: Process.Id) !void {
+    if (self.hasChildWithId(child_pid) == null) {
+        log.warn("Process id={d} tried to wait on Process id={d} which is not a child", .{ self.id, child_pid });
         return error.NoPermission;
+    }
 
     const wait_reason = try self.waitReasonAllocate();
     wait_reason.payload = .{ .child_process = child_pid };
@@ -406,12 +395,7 @@ pub fn waitCheck(self: *Process) void {
 pub fn waitReasonsClear(self: *Process) void {
     for (self.waitReasons()) |*wait_reason| {
         if (wait_reason.payload == .futex and !wait_reason.completed) {
-            const futex = wait_reason.payload.futex.futex;
-            futex.lock.lock();
-            futex.remove(self);
-            futex.lock.unlock();
-
-            wait_reason.payload.futex = .{ .futex = undefined, .next = null };
+            Futex.remove(self, wait_reason.payload.futex.address);
         } else if (wait_reason.payload == .child_process) {
             wait_reason.payload.child_process = 0;
         }

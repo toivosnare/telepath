@@ -192,49 +192,81 @@ pub fn share(process: *Process) ShareError!usize {
 pub const RefcountError = libt.syscall.RefcountError;
 pub fn refcount(process: *Process) RefcountError!usize {
     const region_index = process.context.a1;
-    log.debug("Process with ID {d} is getting the reference count of the region {d}.", .{ process.id, region_index });
 
-    const region = try Region.fromIndex(region_index);
-    _ = process.hasRegion(region) orelse return error.NoPermission;
+    const region = Region.fromIndex(region_index) catch |err| {
+        log.warn("Process id={d} tried to refcount Region with invalid index={d}", .{ process.id, region_index });
+        return err;
+    };
+    _ = process.hasRegion(region) orelse {
+        log.warn("Process id={d} tried to refcount unowned Region index={d}", .{ process.id, region_index });
+        return error.NoPermission;
+    };
+
+    log.debug("Process id={d} is getting the reference count of the Region index={d}", .{ process.id, region_index });
+
     return region.refCount();
 }
 
 pub const UnmapError = libt.syscall.UnmapError;
 pub fn unmap(process: *Process) UnmapError!usize {
     const address = process.context.a1;
-    log.debug("Process with ID {d} is unmapping region at address {d}.", .{ process.id, address });
 
-    const region_entry = process.hasRegionAtAddress(address) orelse return error.InvalidParameter;
-    try process.unmapRegionEntry(region_entry);
+    const region_entry = process.hasRegionAtAddress(address) orelse {
+        log.warn("Process id={d} tried unmap a Region address=0x{x} where there is no Region mapped", .{ process.id, address });
+        return error.InvalidParameter;
+    };
+
+    log.debug("Process id={d} is unmapping Region address=0x{x}", .{ process.id, address });
+
+    process.unmapRegionEntry(region_entry) catch unreachable;
     return region_entry.region.?.index();
 }
 
 pub const FreeError = libt.syscall.FreeError;
 pub fn free(process: *Process) FreeError!usize {
     const region_index = process.context.a1;
-    log.debug("Process with ID {d} is freeing region {d}.", .{ process.id, region_index });
 
-    const region = try Region.fromIndex(region_index);
-    const region_entry = process.hasRegion(region) orelse return error.NoPermission;
-    try process.freeRegionEntry(region_entry);
+    const region = Region.fromIndex(region_index) catch |err| {
+        log.warn("Process id={d} tried to free Region with invalid index={d}", .{ process.id, region_index });
+        return err;
+    };
+    const region_entry = process.hasRegion(region) orelse {
+        log.warn("Process id={d} tried to free unowned Region index={d}", .{ process.id, region_index });
+        return error.NoPermission;
+    };
+
+    log.debug("Process id={d} is freeing Region index={d}", .{ process.id, region_index });
+
+    process.freeRegionEntry(region_entry) catch |err| {
+        log.warn("Process id={d} tried to free mapped Region index={d}", .{ process.id, region_index });
+        return err;
+    };
     return 0;
 }
 
 // TODO: Allow waiting on interrupts.
 pub const WaitError = libt.syscall.WaitError;
 pub fn wait(process: *Process) WaitError!usize {
+    assert(process.wait_reason_count == 0);
     const reasons_count = process.context.a1;
     const reasons_int = process.context.a2;
-    log.debug("Process with ID {d} is waiting.", .{process.id});
-
-    assert(process.wait_reason_count == 0);
 
     if (reasons_count != 0 and reasons_int != 0) {
         const reasons_start: [*]libt.syscall.WaitReason = @ptrFromInt(reasons_int);
         const reasons: []libt.syscall.WaitReason = reasons_start[0..reasons_count];
 
         for (0.., reasons) |index, *reason| {
-            process.wait(reason) catch |err| {
+            const result = if (reason.tag == .futex) blk: {
+                const virtual_address = @intFromPtr(reason.payload.futex.address);
+                const expected_value = reason.payload.futex.expected_value;
+                break :blk proc.Futex.wait(process, virtual_address, expected_value);
+            } else if (reason.tag == .child_process) blk: {
+                const child_pid = reason.payload.child_process.pid;
+                break :blk process.waitChildProcess(child_pid);
+            } else blk: {
+                break :blk error.InvalidParameter;
+            };
+            result catch |err| {
                 reason.result = libt.syscall.packResult(err);
                 process.waitClear();
                 return index;
@@ -248,6 +280,8 @@ pub fn wait(process: *Process) WaitError!usize {
     proc.timeout.wait(process, timeout_ns);
     process.state = .waiting;
 
+    log.debug("Process id={d} is waiting with {d} reasons", .{ process.id, reasons_count });
+
     process.lock.unlock();
     proc.scheduler.scheduleNext(null, process.context.hart_index);
 }
@@ -256,7 +290,5 @@ pub const WakeError = libt.syscall.WakeError;
 pub fn wake(process: *Process) WakeError!usize {
     const virtual_address = process.context.a1;
     const waiter_count = process.context.a2;
-    log.debug("Process with ID {d} is waking {d} waiters waiting on address 0x{x}.", .{ process.id, waiter_count, virtual_address });
-
     return proc.Futex.wake(process, virtual_address, waiter_count);
 }
