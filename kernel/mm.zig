@@ -1,5 +1,5 @@
 const std = @import("std");
-const log = std.log;
+const log = std.log.scoped(.mm);
 const mem = std.mem;
 const assert = std.debug.assert;
 const libt = @import("libt");
@@ -151,7 +151,7 @@ pub fn init(
     out_tix_allocations: *PageSlice,
     out_fdt_allocations: *PageSlice,
 ) void {
-    log.info("Initializing memory subsystem.", .{});
+    log.info("Initializing memory subsystem", .{});
     page_allocator.init(heap, tix, fdt, out_tix_allocations, out_fdt_allocations);
     Region.init();
 }

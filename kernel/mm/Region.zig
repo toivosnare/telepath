@@ -1,4 +1,5 @@
 const std = @import("std");
+const log = std.log.scoped(.@"mm.Region");
 const math = std.math;
 const mm = @import("../mm.zig");
 const PhysicalAddress = mm.PhysicalAddress;
@@ -28,6 +29,7 @@ pub fn init() void {
 }
 
 pub fn allocate(size: usize, physical_address: PhysicalAddress) !*Region {
+    log.debug("Allocating Region of size {d}", .{size});
     const region = for (&table) |*r| {
         if (!r.lock.tryLock())
             continue;
@@ -35,9 +37,11 @@ pub fn allocate(size: usize, physical_address: PhysicalAddress) !*Region {
             break r;
         r.lock.unlock();
     } else {
+        log.warn("Could not find free Region table slot", .{});
         return error.OutOfMemory;
     };
     defer region.lock.unlock();
+    log.debug("Found free Region index={d}", .{region.index()});
 
     // TODO: it is not possible to allocate physical address 0?
     if (physical_address == 0) {
@@ -46,12 +50,16 @@ pub fn allocate(size: usize, physical_address: PhysicalAddress) !*Region {
         region.allocation.ptr = mm.physicalFromLogical(region.allocation.ptr);
         region.mmio = false;
     } else {
-        if (!std.mem.isAligned(physical_address, @sizeOf(Page)))
+        if (!std.mem.isAligned(physical_address, @sizeOf(Page))) {
+            log.warn("Requested Region physical address (0x{x}) is not aligned to a page boundary", .{physical_address});
             return error.InvalidParameter;
+        }
         region.allocation.ptr = @ptrFromInt(physical_address);
         region.allocation.len = size;
-        if (mm.pageSlicesOverlap(region.allocation, mm.ram_physical_slice))
+        if (mm.pageSlicesOverlap(region.allocation, mm.ram_physical_slice)) {
+            log.warn("Requested Region physical address (0x{x}) overlaps with RAM", .{physical_address});
             return error.InvalidParameter;
+        }
         region.mmio = true;
     }
     region.ref_count = 1;
@@ -62,13 +70,16 @@ pub fn allocate(size: usize, physical_address: PhysicalAddress) !*Region {
 pub fn ref(self: *Region) void {
     self.lock.lock();
     self.ref_count += 1;
+    log.debug("Adding reference to Region index={d}. Ref count is now {d}", .{ self.index(), self.ref_count });
     self.lock.unlock();
 }
 
 pub fn unref(self: *Region) void {
     self.lock.lock();
     self.ref_count -= 1;
+    log.debug("Removing reference to Region index={d}. Ref count is now {d}", .{ self.index(), self.ref_count });
     if (self.ref_count == 0 and !self.mmio) {
+        log.debug("Freeing allocation of Region index={d}", .{self.index()});
         var logical: PageSlice = undefined;
         logical.ptr = mm.logicalFromPhysical(self.allocation.ptr);
         logical.len = self.allocation.len;

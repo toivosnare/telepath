@@ -1,8 +1,9 @@
 const std = @import("std");
 const assert = std.debug.assert;
-const mm = @import("../mm.zig");
+const fmt = std.fmt;
 const mem = std.mem;
-const log = std.log;
+const log = std.log.scoped(.@"mm.page_allocator");
+const mm = @import("../mm.zig");
 const libt = @import("libt");
 const Spinlock = libt.sync.Spinlock;
 const Page = mm.Page;
@@ -121,7 +122,7 @@ pub fn init(
     out_tix_allocations: *PageSlice,
     out_fdt_allocations: *PageSlice,
 ) void {
-    log.info("Initializing page allocator.", .{});
+    log.info("Initializing page allocator", .{});
     const heap_pages = std.mem.alignBackward(usize, heap.len, max_order_pages);
     max_nodes = heap_pages / max_order_pages;
 
@@ -140,6 +141,8 @@ pub fn init(
     bitfield = std.PackedIntSlice(u1).init(bitfield_bytes, bitfield_bits);
     pages = heap[metadata_pages..];
 
+    log.info("Total free memory is {}", .{fmt.fmtIntSizeBin(pages.len * @sizeOf(Page))});
+
     out_tix_allocations.len = 0;
     out_fdt_allocations.len = 0;
 
@@ -148,12 +151,10 @@ pub fn init(
     while (end <= pages.len) {
         const slice = pages[start..end];
         if (mm.pageSlicesOverlap(slice, tix)) {
-            log.debug("{*} overlaps with tix.", .{slice});
             if (out_tix_allocations.len == 0)
                 out_tix_allocations.ptr = slice.ptr;
             out_tix_allocations.len += max_order_pages;
         } else if (mm.pageSlicesOverlap(slice, fdt)) {
-            log.debug("{*} overlaps with fdt.", .{slice});
             if (out_fdt_allocations.len == 0)
                 out_fdt_allocations.ptr = slice.ptr;
             out_fdt_allocations.len += max_order_pages;
@@ -169,12 +170,13 @@ pub fn allocate(requested_order: usize) !PageSlice {
     lock.lock();
     defer lock.unlock();
 
-    log.debug("Allocating node of order {}.", .{requested_order});
+    log.debug("Allocating node of order {d}", .{requested_order});
     var order = requested_order;
     const node: *Node = while (order < max_order) : (order += 1) {
         if (buckets[order].free_list.pop()) |node|
             break node;
     } else {
+        log.warn("Could not allocate node of order {d}", .{requested_order});
         return error.OutOfMemory;
     };
     buckets[order].free_count -= 1;
@@ -204,7 +206,7 @@ pub fn free(slice: PageSlice) void {
     assert(std.math.isPowerOfTwo(slice.len));
     var order = std.math.log2(slice.len);
     var node: *Node = @ptrCast(slice.ptr);
-    log.debug("Freeing node {*} of order {}.", .{ node, order });
+    log.debug("Freeing node {*} of order {d}", .{ node, order });
 
     while (order < max_order - 1) : (order += 1) {
         if (node.flip(order))
@@ -218,29 +220,8 @@ pub fn free(slice: PageSlice) void {
     buckets[order].free_count += 1;
 }
 
-pub fn dump() void {
-    lock.lock();
-    defer lock.unlock();
-
-    log.debug("Page allocator status:", .{});
-    for (0.., buckets) |order, *bucket| {
-        log.debug("Order {} free count {}", .{ order, bucket.free_count });
-        const head = &bucket.free_list;
-        var node: *Node = head.getNext();
-        while (node != head) : (node = node.getNext()) {
-            log.debug("\t{*}", .{node});
-        }
-    }
-
-    log.debug("Bitfield:", .{});
-    for (0..bitfield.len) |i| {
-        log.debug("\t{}", .{bitfield.get(i)});
-    }
-}
-
 pub fn onAddressTranslationEnabled() void {
     buckets = mm.logicalFromPhysical(buckets);
     bitfield.bytes.ptr = mm.logicalFromPhysical(bitfield.bytes.ptr);
     pages.ptr = mm.logicalFromPhysical(pages.ptr);
-    log.debug("buckets : {*}, bitfield : {*}, pages : {*}", .{ buckets, bitfield.bytes, pages });
 }
