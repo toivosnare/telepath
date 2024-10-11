@@ -1,5 +1,5 @@
 const std = @import("std");
-const log = std.log;
+const log = std.log.scoped(.proc);
 const math = std.math;
 const mem = std.mem;
 const assert = std.debug.assert;
@@ -37,7 +37,7 @@ pub var table: [MAX_PROCESSES]Process = undefined;
 var next_pid: atomic.Value(Process.Id) = atomic.Value(Process.Id).init(2);
 
 pub fn init() *Process {
-    log.info("Initializing process subsystem.", .{});
+    log.info("Initializing process subsystem", .{});
     for (&table) |*p| {
         p.lock = .{};
         p.id = 0;
@@ -82,12 +82,14 @@ pub fn onAddressTranslationEnabled() void {
 }
 
 pub fn allocate() !*Process {
+    log.debug("Allocating proc table slot", .{});
     for (&table) |*p| {
         if (!p.lock.tryLock())
             continue;
 
         if (p.state == .invalid) {
             p.id = next_pid.fetchAdd(1, .monotonic);
+            log.debug("Found free proc table slot for Process id={d}", .{p.id});
 
             p.page_table = @ptrCast(try mm.page_allocator.allocate(0));
             @memset(mem.asBytes(p.page_table), 0);
@@ -103,10 +105,12 @@ pub fn allocate() !*Process {
         }
         p.lock.unlock();
     }
+    log.warn("Could not find free proc table slot", .{});
     return error.OutOfMemory;
 }
 
 pub fn free(process: *Process) void {
+    log.debug("Freeing Process id={d}", .{process.id});
     process.id = 0;
     process.parent = null;
     process.children.resize(0) catch unreachable;

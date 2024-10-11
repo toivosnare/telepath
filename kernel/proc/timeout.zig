@@ -1,5 +1,6 @@
 const std = @import("std");
 const assert = std.debug.assert;
+const log = std.log.scoped(.@"proc.timeout");
 const math = std.math;
 const mem = std.mem;
 const proc = @import("../proc.zig");
@@ -15,6 +16,8 @@ pub fn wait(process: *Process, timeout_ns: u64) void {
     assert(process.wait_timeout_next == null);
     if (timeout_ns == math.maxInt(u64))
         return;
+
+    log.debug("Adding Process id={d} to the timeout queue with timeout of {d} ns", .{ process.id, timeout_ns });
 
     // TODO: Can overflow?
     process.wait_timeout_time = riscv.time.read() + proc.ticks_per_ns * timeout_ns;
@@ -40,6 +43,8 @@ pub fn wait(process: *Process, timeout_ns: u64) void {
 }
 
 pub fn remove(process: *Process) void {
+    log.debug("Removing Process id={d} from the timeout queue", .{process.id});
+
     lock.lock();
     defer lock.unlock();
 
@@ -62,6 +67,7 @@ pub fn remove(process: *Process) void {
 }
 
 pub fn check(time: u64) void {
+    log.debug("Checking timeout queue", .{});
     while (true) {
         lock.lock();
 
@@ -78,6 +84,7 @@ pub fn check(time: u64) void {
                 lock.unlock();
                 break;
             }
+            log.debug("Process id={d} timed out", .{h.id});
             head = h.wait_timeout_next;
             h.wait_timeout_next = null;
             h.wait_timeout_time = 0;

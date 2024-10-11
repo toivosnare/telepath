@@ -1,5 +1,5 @@
 const std = @import("std");
-const log = std.log;
+const log = std.log.scoped(.@"proc.scheduler");
 const mem = std.mem;
 const proc = @import("../proc.zig");
 const Process = proc.Process;
@@ -19,9 +19,9 @@ var head: ?*Process = null;
 var tail: ?*Process = null;
 
 pub fn scheduleNext(current_process: ?*Process, hart_index: Hart.Index) noreturn {
-    log.info("Scheduling on hart index {d}.", .{hart_index});
+    log.debug("Scheduling on hart index={d}", .{hart_index});
     const next_process = if (pop()) |next| blk: {
-        log.debug("Scheduling next.", .{});
+        log.debug("Switching context to Process id={d} on hart index={d}", .{ next.id, hart_index });
         next.state = .running;
         next.context.hart_index = hart_index;
 
@@ -41,10 +41,10 @@ pub fn scheduleNext(current_process: ?*Process, hart_index: Hart.Index) noreturn
 
         break :blk next;
     } else if (current_process != null) blk: {
-        log.debug("Scheduling current.", .{});
+        log.debug("No processes in the ready queue. Continuing with Process id={d} on hart index={d}", .{ current_process.?.id, hart_index });
         break :blk current_process.?;
     } else {
-        log.debug("Entering idle.", .{});
+        log.debug("No processes in the ready queue. Entering idle on hart index={d}", .{hart_index});
         sbi.time.setTimer(riscv.time.read() + proc.ticks_per_ns * quantum_ns);
         idle(@intFromPtr(&mm.kernel_stack) + (hart_index + 1) * entry.KERNEL_STACK_SIZE_PER_HART, hart_index);
     };
@@ -82,6 +82,7 @@ fn pop() ?*Process {
 
 pub fn scheduleCurrent(current_process: *Process) noreturn {
     current_process.lock.unlock();
+    log.debug("Continuing with Process id={d} on hart index={d}", .{ current_process.id, current_process.context.hart_index });
     returnToUserspace(&current_process.context);
 }
 
@@ -90,7 +91,7 @@ extern fn idle(stack_pointer: usize, hart_index: Hart.Index) noreturn;
 
 // Process lock must be held, i think?
 pub fn enqueue(process: *Process) void {
-    log.debug("Adding process with ID {d} to the process queue.", .{process.id});
+    log.debug("Adding Process id={d} to the process queue", .{process.id});
     lock.lock();
     defer lock.unlock();
 
@@ -106,7 +107,7 @@ pub fn enqueue(process: *Process) void {
 }
 
 pub fn remove(process: *Process) void {
-    log.debug("Removing process with ID {d} from the process queue.", .{process.id});
+    log.debug("Removing Process id={d} from the process queue", .{process.id});
     lock.lock();
     defer lock.unlock();
 
