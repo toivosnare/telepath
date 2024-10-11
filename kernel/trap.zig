@@ -1,5 +1,5 @@
 const std = @import("std");
-const log = std.log;
+const log = std.log.scoped(.trap);
 const meta = std.meta;
 const math = std.math;
 const assert = std.debug.assert;
@@ -22,7 +22,7 @@ pub fn init() void {
         .lcofie = true,
     });
 
-    // Some syscall need to access user space memory.
+    // Some syscalls need to access user space memory.
     riscv.sstatus.set(.sum);
 }
 
@@ -47,7 +47,7 @@ export fn handleTrap2(context: ?*Process.Context, hart_index: proc.Hart.Index) n
 }
 
 fn handleInterrupt(code: riscv.scause.InterruptCode, current_process: ?*Process, hart_index: proc.Hart.Index) noreturn {
-    log.debug("Interrupt: code={s}", .{@tagName(code)});
+    log.debug("Interrupt code={s} on hart index={d}", .{ @tagName(code), hart_index });
     switch (code) {
         .supervisor_timer_interrupt => handleTimerInterrupt(current_process, hart_index),
         else => @panic("unhandled interrupt"),
@@ -61,6 +61,7 @@ fn handleTimerInterrupt(current_process: ?*Process, hart_index: proc.Hart.Index)
         defer current.lock.unlock();
 
         if (current.killed) {
+            log.debug("Freeing killed process id={d}", .{current.id});
             proc.free(current);
             break :blk null;
         } else {
@@ -76,10 +77,11 @@ fn handleException(code: riscv.scause.ExceptionCode, current_process: ?*Process)
     const process = current_process.?;
 
     const stval = riscv.stval.read();
-    log.debug("Exception: code={s}, stval={x}", .{ @tagName(code), stval });
+    log.debug("Exception code={s} stval={x} on hart index={d}", .{ @tagName(code), stval, process.context.hart_index });
 
     process.lock.lock();
     if (process.killed) {
+        log.debug("Freeing killed process id={d}", .{process.id});
         proc.free(process);
         process.lock.unlock();
         proc.scheduler.scheduleNext(null, process.context.hart_index);
@@ -94,6 +96,7 @@ fn handleException(code: riscv.scause.ExceptionCode, current_process: ?*Process)
         .store_amo_address_misaligned,
         .store_amo_access_fault,
         => {
+            log.warn("Process id={d} crashed ({s})", .{ process.id, @tagName(code) });
             process.exit(libt.syscall.packResult(error.Crashed));
             proc.scheduler.scheduleNext(null, process.context.hart_index);
         },

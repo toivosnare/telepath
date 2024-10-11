@@ -1,5 +1,5 @@
 const std = @import("std");
-const log = std.log;
+const log = std.log.scoped(.@"trap.syscall");
 const assert = std.debug.assert;
 const mem = std.mem;
 const math = std.math;
@@ -11,7 +11,7 @@ const Process = proc.Process;
 
 pub fn exit(process: *Process) noreturn {
     const exit_code = process.context.a1;
-    log.debug("Process with PID {d} is exiting with exit code {d}.", .{ process.id, exit_code });
+    log.debug("Process id={d} is exiting with exit code {d}", .{ process.id, exit_code });
 
     process.exit(exit_code);
     proc.scheduler.scheduleNext(null, process.context.hart_index);
@@ -19,12 +19,13 @@ pub fn exit(process: *Process) noreturn {
 
 pub const IdentifyError = libt.syscall.IdentifyError;
 pub fn identify(process: *Process) IdentifyError!usize {
+    log.debug("Process id={d} is identifying itself", .{process.id});
     return process.id;
 }
 
 pub const ForkError = libt.syscall.ForkError;
 pub fn fork(process: *Process) ForkError!usize {
-    log.debug("Process with ID {d} is forking.", .{process.id});
+    log.debug("Process id={d} is forking", .{process.id});
 
     // const child_process = try proc.allocate();
     // errdefer proc.free(child_process);
@@ -47,43 +48,69 @@ pub fn fork(process: *Process) ForkError!usize {
 pub const SpawnError = libt.syscall.SpawnError;
 pub fn spawn(process: *Process) SpawnError!usize {
     const region_amount = process.context.a1;
-    if (region_amount == 0)
+    if (region_amount == 0) {
+        log.warn("Process id={d} tried to spawn with 0 regions", .{process.id});
         return error.InvalidParameter;
+    }
 
     const region_descriptions_int = process.context.a2;
-    if (region_descriptions_int == 0)
+    if (region_descriptions_int == 0) {
+        log.warn("Process id={d} tried to spawn with null region descriptions pointer", .{process.id});
         return error.InvalidParameter;
+    }
     const region_descriptions_ptr: [*]libt.syscall.RegionDescription = @ptrFromInt(region_descriptions_int);
     const region_descriptions: []libt.syscall.RegionDescription = region_descriptions_ptr[0..region_amount];
 
     const argument_amount = process.context.a3;
-    if (argument_amount > 7)
+    if (argument_amount > 7) {
+        log.warn("Process id={d} tried to spawn with {d} arguments", .{ process.id, argument_amount });
         return error.InvalidParameter;
+    }
 
     const arguments_int = process.context.a4;
-    if (arguments_int == 0)
+    if (arguments_int == 0) {
+        log.warn("Process id={d} tried to spawn with null arguments pointer", .{process.id});
         return error.InvalidParameter;
+    }
     const arguments_ptr: [*]usize = @ptrFromInt(arguments_int);
     const arguments: []usize = arguments_ptr[0..region_amount];
 
     const instruction_pointer = process.context.a5;
     const stack_pointer = process.context.a6;
-    log.debug("Process with ID {d} is spawning with {d} regions and {d} arguments.", .{ process.id, region_amount, argument_amount });
 
     for (region_descriptions) |region_description| {
-        const region = try Region.fromIndex(region_description.region);
-        if (region.isFree())
+        const region = Region.fromIndex(region_description.region) catch |err| {
+            log.warn("Process id={d} tried to spawn with Region with invalid index={d}", .{ process.id, region_description.region });
+            return err;
+        };
+        if (region.isFree()) {
+            log.warn("Process id={d} tried to spawn with free Region index={d}", .{ process.id, region_description.region });
             return error.InvalidParameter;
+        }
 
-        const region_entry = process.hasRegion(region) orelse return error.NoPermission;
-        if (region_description.readable and !region_entry.permissions.readable)
+        const region_entry = process.hasRegion(region) orelse {
+            log.warn("Process id={d} tried to spawn with unowned Region index={d}", .{ process.id, region_description.region });
             return error.NoPermission;
-        if (region_description.writable and !region_entry.permissions.writable)
+        };
+        if (region_description.readable and !region_entry.permissions.readable) {
+            log.warn("Process id={d} tried to spawn with Region index={d} that it has no read permission for", .{ process.id, region_description.region });
             return error.NoPermission;
-        if (region_description.executable and !region_entry.permissions.executable)
+        }
+        if (region_description.writable and !region_entry.permissions.writable) {
+            log.warn("Process id={d} tried to spawn with Region index={d} that it has no write permission for", .{ process.id, region_description.region });
             return error.NoPermission;
+        }
+        if (region_description.executable and !region_entry.permissions.executable) {
+            log.warn("Process id={d} tried to spawn with Region index={d} that it has no execute permission for", .{ process.id, region_description.region });
+            return error.NoPermission;
+        }
     }
-    process.children.ensureUnusedCapacity(1) catch return error.OutOfMemory;
+    process.children.ensureUnusedCapacity(1) catch {
+        log.warn("Process id={d} spawn failed because child array is full", .{process.id});
+        return error.OutOfMemory;
+    };
+
+    log.debug("Process id={d} is spawning with {d} regions and {d} arguments, ip=0x{x}, sp=0x{x}", .{ process.id, region_amount, argument_amount, instruction_pointer, stack_pointer });
 
     const child_process = try proc.allocate();
     {
@@ -120,9 +147,13 @@ pub fn spawn(process: *Process) SpawnError!usize {
 pub const KillError = libt.syscall.KillError;
 pub fn kill(process: *Process) KillError!usize {
     const child_pid = process.context.a1;
-    log.debug("Process with ID {d} is killing child with ID {d}.", .{ process.id, child_pid });
+    const child_process = process.hasChildWithId(child_pid) orelse {
+        log.warn("Process id={d} tried to kill Process id={d} which is not a child", .{ process.id, child_pid });
+        return error.NoPermission;
+    };
 
-    const child_process = process.hasChildWithId(child_pid) orelse return error.NoPermission;
+    log.debug("Process id={d} is killing child Process id={d}", .{ process.id, child_pid });
+
     child_process.lock.lock();
     process.kill(child_process);
     child_process.lock.unlock();
@@ -135,7 +166,7 @@ pub fn allocate(process: *Process) AllocateError!usize {
     const size = process.context.a1;
     const permissions: libt.syscall.Permissions = @bitCast(process.context.a2);
     const physical_address = process.context.a3;
-    log.debug("Process with ID {d} is allocating region of size {d} with permissions {} at physical address 0x{x}.", .{ process.id, size, permissions, physical_address });
+    log.debug("Process id={d} is allocating Region size={d} permissions={} physical_address=0x{x}", .{ process.id, size, permissions, physical_address });
 
     const region_entry = try process.allocateRegion(size, .{
         .readable = permissions.readable,
@@ -150,9 +181,14 @@ pub const MapError = libt.syscall.MapError;
 pub fn map(process: *Process) MapError!usize {
     const region_index = process.context.a1;
     const requested_address = process.context.a2;
-    log.debug("Process with ID {d} is mapping region {d} at 0x{x}.", .{ process.id, region_index, requested_address });
 
-    const region = try Region.fromIndex(region_index);
+    const region = Region.fromIndex(region_index) catch |err| {
+        log.warn("Process id={d} tried to map Region with invalid index={d}", .{ process.id, region_index });
+        return err;
+    };
+
+    log.debug("Process id={d} is mapping Region index={d} address=0x{x}", .{ process.id, region_index, requested_address });
+
     const actual_address = try process.mapRegion(region, requested_address);
     return actual_address;
 }
@@ -162,20 +198,37 @@ pub fn share(process: *Process) ShareError!usize {
     const region_index = process.context.a1;
     const recipient_id = process.context.a2;
     const permissions: libt.syscall.Permissions = @bitCast(process.context.a3);
-    log.debug("Process with ID {d} is sharing region {d} with process with ID {d} with permissions: {}.", .{ process.id, region_index, recipient_id, permissions });
 
-    const region = try Region.fromIndex(region_index);
-    const region_entry = process.hasRegion(region) orelse return error.NoPermission;
-    if (permissions.readable and !region_entry.permissions.readable)
+    const region = Region.fromIndex(region_index) catch |err| {
+        log.warn("Process id={d} tried to share Region with invalid index={d}", .{ process.id, region_index });
+        return err;
+    };
+    const region_entry = process.hasRegion(region) orelse {
+        log.warn("Process id={d} tried to share unowned Region index={d}", .{ process.id, region_index });
         return error.NoPermission;
-    if (permissions.writable and !region_entry.permissions.writable)
+    };
+    if (permissions.readable and !region_entry.permissions.readable) {
+        log.warn("Process id={d} tried to share Region index={d} that it has no read permission for", .{ process.id, region_index });
         return error.NoPermission;
-    if (permissions.executable and !region_entry.permissions.executable)
+    }
+    if (permissions.writable and !region_entry.permissions.writable) {
+        log.warn("Process id={d} tried to share Region index={d} that it has no write permission for", .{ process.id, region_index });
         return error.NoPermission;
+    }
+    if (permissions.executable and !region_entry.permissions.executable) {
+        log.warn("Process id={d} tried to share Region index={d} that it has no execute permission for", .{ process.id, region_index });
+        return error.NoPermission;
+    }
 
+    const recipient = proc.processFromId(recipient_id) orelse {
+        log.warn("Process id={d} tried to share Region index={d} to Process with invalid id={d}", .{ process.id, region_index, recipient_id });
+        return error.InvalidParameter;
+    };
+
+    log.debug("Process id={d} is sharing Region index={d} with Process id={d} with permissions={}", .{ process.id, region_index, recipient_id, permissions });
+
+    // TODO: fix locking.
     process.lock.unlock();
-
-    const recipient = proc.processFromId(recipient_id) orelse return error.InvalidParameter;
     {
         defer recipient.lock.unlock();
         _ = try recipient.receiveRegion(region, .{
