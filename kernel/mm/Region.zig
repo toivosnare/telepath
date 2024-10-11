@@ -17,8 +17,8 @@ mmio: bool,
 lock: Spinlock,
 
 pub const Index = usize;
-pub const MAX_REGIONS = 128;
-pub var table: [MAX_REGIONS]Region = undefined;
+const max_regions = 128;
+var table: [max_regions]Region = undefined;
 
 pub fn init() void {
     for (&table) |*r| {
@@ -100,7 +100,7 @@ pub fn index(self: *const Region) Index {
 }
 
 pub fn fromIndex(idx: Index) !*Region {
-    if (idx >= MAX_REGIONS)
+    if (idx >= max_regions)
         return error.InvalidParameter;
     return &table[idx];
 }

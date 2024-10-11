@@ -24,12 +24,12 @@ id: Id,
 parent: ?*Process,
 children: Children,
 state: State,
-region_entries: [MAX_REGIONS]RegionEntry,
+region_entries: [max_regions]RegionEntry,
 region_entries_head: ?*RegionEntry,
 page_table: PageTable.Ptr,
 context: Context,
 wait_reason_count: usize,
-wait_reasons: [MAX_WAIT_REASONS]WaitReason,
+wait_reasons: [max_wait_reasons]WaitReason,
 wait_reasons_user: []libt.syscall.WaitReason,
 wait_all: bool,
 wait_timeout_next: ?*Process,
@@ -37,12 +37,12 @@ wait_timeout_time: u64,
 scheduler_next: ?*Process,
 killed: bool,
 
-const MAX_CHILDREN = 16;
-const MAX_REGIONS = 32;
-const MAX_WAIT_REASONS = 8;
+const max_children = 16;
+const max_regions = 32;
+const max_wait_reasons = 8;
 
 pub const Id = usize;
-pub const Children = std.BoundedArray(*Process, MAX_CHILDREN);
+pub const Children = std.BoundedArray(*Process, max_children);
 pub const State = enum {
     invalid,
     ready,
@@ -377,8 +377,10 @@ fn waitChildProcess(self: *Process, child_pid: Process.Id) !void {
 }
 
 pub fn waitReasonAllocate(self: *Process) !*WaitReason {
-    if (self.wait_reason_count == MAX_WAIT_REASONS)
+    if (self.wait_reason_count == max_wait_reasons) {
+        log.warn("Process id={d} has no free wait reasons", .{self.id});
         return error.OutOfMemory;
+    }
 
     const wait_reason = &self.wait_reasons[self.wait_reason_count];
     wait_reason.completed = false;
