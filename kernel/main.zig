@@ -7,7 +7,7 @@ const riscv = @import("riscv.zig");
 const libt = @import("libt");
 const sbi = @import("sbi");
 const atomic = std.atomic;
-const log = std.log;
+const log = std.log.scoped(.main);
 const math = std.math;
 const assert = std.debug.assert;
 const mem = std.mem;
@@ -37,14 +37,12 @@ extern const kernel_linker_end: anyopaque;
 
 export fn bootHartMain(boot_hart_id: Hart.Id, fdt_physical_start: PhysicalAddress, kernel_physical_start: PhysicalAddress) noreturn {
     trap.init();
-    log.info("Boot hart with id {} booting..", .{boot_hart_id});
-    log.debug("fdt_physical_start={x}", .{fdt_physical_start});
-    log.debug("kernel_physical_start={x}", .{kernel_physical_start});
 
+    log.info("Booting kernel on boot hart id={d}", .{boot_hart_id});
     proc.hart_array[0].id = boot_hart_id;
+
+    log.info("Loading FDT from physical address 0x{x}", .{fdt_physical_start});
     const pr = fdt.parse(fdt_physical_start);
-    log.debug("harts: {any}", .{proc.harts});
-    log.debug("fdt: {any}", .{pr});
 
     mm.ram_physical_slice.ptr = @ptrFromInt(mem.alignBackward(PhysicalAddress, pr.ram_physical_start, @sizeOf(Page)));
     mm.ram_physical_slice.len = math.divCeil(usize, pr.ram_size, @sizeOf(Page)) catch unreachable;
@@ -52,6 +50,7 @@ export fn bootHartMain(boot_hart_id: Hart.Id, fdt_physical_start: PhysicalAddres
     const kernel_size = @intFromPtr(&kernel_linker_end) - @intFromPtr(&kernel_linker_start);
     const kernel_physical_end = kernel_physical_start + kernel_size;
     mm.kernel_size = math.divCeil(usize, kernel_size, @sizeOf(Page)) catch unreachable;
+
     const heap_physical_start = mem.alignForward(PhysicalAddress, kernel_physical_end, @sizeOf(Page));
     const heap_physical_end = mem.alignBackward(PhysicalAddress, pr.ram_physical_end, @sizeOf(Page));
     mm.logical_size = (heap_physical_end - heap_physical_start) / @sizeOf(Page);
@@ -92,9 +91,10 @@ export fn bootHartMain(boot_hart_id: Hart.Id, fdt_physical_start: PhysicalAddres
     // TODO: Map different parts of the kernel with different permissions.
     init_process.page_table.mapRange(kernel_slice, kernel_physical_slice, .{ .valid = true, .readable = true, .writable = true, .executable = true, .global = true }) catch @panic("OOM");
 
+    log.info("Loading TIX from physical address 0x{x}", .{pr.initrd_physical_start});
     const tix_header: *tix.Header = @ptrFromInt(pr.initrd_physical_start);
     if (!mem.eql(u8, &tix_header.magic, &tix.Header.MAGIC))
-        @panic("Invalid TIX magic.");
+        @panic("invalid TIX magic");
     init_process.context.pc = tix_header.entry_point;
 
     var region_headers: []tix.RegionHeader = undefined;
@@ -102,7 +102,6 @@ export fn bootHartMain(boot_hart_id: Hart.Id, fdt_physical_start: PhysicalAddres
     region_headers.len = tix_header.region_amount;
 
     for (region_headers) |rh| {
-        log.debug("region header: {}", .{rh});
         const region_size_in_pages = math.divCeil(usize, rh.memory_size, @sizeOf(Page)) catch unreachable;
         const region_entry = init_process.allocateRegion(region_size_in_pages, .{
             .readable = rh.readable,
@@ -120,8 +119,9 @@ export fn bootHartMain(boot_hart_id: Hart.Id, fdt_physical_start: PhysicalAddres
         source.len = rh.file_size;
 
         @memcpy(dest, source);
-        log.debug("copied {} bytes from {*} to {*}", .{ rh.file_size, source.ptr, dest });
     }
+
+    // Free temporary TIX allocations.
     var start: usize = 0;
     var end: usize = mm.page_allocator.max_order_pages;
     while (end <= tix_allocations.len) {
@@ -131,6 +131,8 @@ export fn bootHartMain(boot_hart_id: Hart.Id, fdt_physical_start: PhysicalAddres
         end += mm.page_allocator.max_order_pages;
     }
 
+    // Allocate and map region for the FDT for init process.
+    // The FDT is copied to make sure it is aligned to a page boundary (also everything was easier to impelemt this way).
     const fdt_region_entry = init_process.allocateRegion(fdt_physical_slice.len, .{ .readable = true }, 0) catch @panic("OOM");
     const fdt_address = init_process.mapRegionEntry(fdt_region_entry, 0) catch @panic("mapRegionEntry");
     init_process.context.a0 = fdt_address;
@@ -141,6 +143,7 @@ export fn bootHartMain(boot_hart_id: Hart.Id, fdt_physical_start: PhysicalAddres
     source.len = pr.fdt_size;
     @memcpy(dest, source);
 
+    // Free temporary FDT allocations.
     start = 0;
     end = mm.page_allocator.max_order_pages;
     while (end <= fdt_allocations.len) {
@@ -183,31 +186,30 @@ export fn main(hart_index: Hart.Index) noreturn {
         trap.onAddressTranslationEnabled();
         mm.page_allocator.onAddressTranslationEnabled();
         proc.onAddressTranslationEnabled();
-        log.info("Address translation enabled for boot hart.", .{});
 
+        log.info("Address translation enabled for boot hart. Bringing up other harts", .{});
         for (proc.harts[1..], 1..) |*secondary_hart, i|
             sbi.hsm.hartStart(secondary_hart.id, @intFromPtr(&secondaryHartEntry), i) catch @panic("hartStart");
 
         while (harts_ready.load(.monotonic) < proc.harts.len - 1) {}
 
-        log.info("Unmapping trampoline.", .{});
         const trampoline_page: ConstPageFramePtr = @ptrCast(&trampoline);
         const init_process = &proc.table[0];
         init_process.page_table.unmap(trampoline_page);
 
+        log.info("All harts ready", .{});
         _ = harts_ready.fetchAdd(1, .monotonic);
-        log.info("All harts ready.", .{});
     } else {
         trap.onAddressTranslationEnabled();
+        log.info("Secondary hart index={d} id={d} ready", .{ hart_index, proc.harts[hart_index].id });
         _ = harts_ready.fetchAdd(1, .monotonic);
-        log.info("Hart index {d} ready.", .{hart_index});
         while (harts_ready.load(.monotonic) < proc.harts.len) {}
     }
     proc.scheduler.scheduleNext(null, hart_index);
 }
 
 pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
-    log.err("PANIC: {s}.", .{msg});
+    log.err("PANIC: {s}", .{msg});
     while (true) {
         asm volatile ("wfi");
     }
