@@ -18,6 +18,7 @@ pub const Process = @import("proc/Process.zig");
 pub const scheduler = @import("proc/scheduler.zig");
 pub const Futex = @import("proc/Futex.zig");
 pub const timeout = @import("proc/timeout.zig");
+pub const interrupt = @import("proc/interrupt.zig");
 
 pub const Hart = extern struct {
     id: Id,
@@ -78,6 +79,7 @@ pub fn onAddressTranslationEnabled() void {
     }
     riscv.sstatus.clear(.spp);
     Futex.init();
+    interrupt.init();
     scheduler.enqueue(init_process);
 }
 

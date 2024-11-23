@@ -9,28 +9,50 @@ const proc = @import("proc.zig");
 const libt = @import("libt");
 const syscall = @import("trap/syscall.zig");
 const Process = proc.Process;
+const Hart = proc.Hart;
+
+pub const Plic = @import("trap/plic.zig").Plic;
+pub var plic: Plic align(@sizeOf(mm.Page)) linksection(".bss") = undefined;
 
 pub fn init() void {
     riscv.stvec.write(.{
         .mode = .direct,
         .base = @intCast(@intFromPtr(&handleTrap) >> 2),
     });
-    riscv.sie.write(.{
-        .ssie = true,
-        .stie = true,
-        .seie = true,
-        .lcofie = true,
-    });
+    enableInterrupts();
 
     // Some syscalls need to access user space memory.
     riscv.sstatus.set(.sum);
 }
 
-pub fn onAddressTranslationEnabled() void {
+pub inline fn enableInterrupts() void {
+    log.debug("Enabling interrupts", .{});
+    riscv.sie.write(.{
+        .ssie = false,
+        .stie = true,
+        .seie = true,
+        .lcofie = false,
+    });
+}
+
+pub inline fn disableInterrupts() void {
+    log.debug("Disabling interrupts", .{});
+    riscv.sie.write(.{
+        .ssie = false,
+        .stie = false,
+        .seie = false,
+        .lcofie = false,
+    });
+}
+
+pub fn onAddressTranslationEnabled(hart_index: Hart.Index) void {
     riscv.stvec.write(.{
         .mode = .direct,
         .base = @intCast((@intFromPtr(&handleTrap) + mm.kernel_offset) >> 2),
     });
+
+    const hart_id = proc.harts[hart_index].id;
+    plic.setTreshold(hart_id, 0);
 }
 
 extern fn handleTrap() align(4) callconv(.Naked) noreturn;
@@ -50,6 +72,7 @@ fn handleInterrupt(code: riscv.scause.InterruptCode, current_process: ?*Process,
     log.debug("Interrupt code={s} on hart index={d}", .{ @tagName(code), hart_index });
     switch (code) {
         .supervisor_timer_interrupt => handleTimerInterrupt(current_process, hart_index),
+        .supervisor_external_interrupt => proc.interrupt.check(current_process, hart_index),
         else => @panic("unhandled interrupt"),
     }
 }
@@ -131,6 +154,7 @@ fn handleSyscall(current_process: *Process) noreturn {
         .wait => syscall.wait(current_process),
         .wake => syscall.wake(current_process),
         .translate => syscall.translate(current_process),
+        .acknowledge => syscall.acknowledge(current_process),
     };
     current_process.context.a0 = libt.syscall.packResult(result);
     proc.scheduler.scheduleCurrent(current_process);

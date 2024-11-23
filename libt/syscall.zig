@@ -17,9 +17,10 @@ pub const Id = enum(usize) {
     wait = 11,
     wake = 12,
     translate = 13,
+    acknowledge = 14,
 };
 
-pub const Error = IdentifyError || ForkError || SpawnError || KillError || AllocateError || MapError || ShareError || RefcountError || UnmapError || WaitError || WakeError || TranslateError;
+pub const Error = IdentifyError || ForkError || SpawnError || KillError || AllocateError || MapError || ShareError || RefcountError || UnmapError || WaitError || WakeError || TranslateError || AcknowledgeError;
 
 pub fn packResult(result: Error!usize) usize {
     if (result) |res| {
@@ -127,12 +128,12 @@ pub fn free(region: usize) FreeError!void {
 }
 
 pub const WaitError = error{ InvalidParameter, WouldBlock, Timeout, NoPermission, Crashed };
-pub fn wait(reasons: ?[]WaitReason, wait_all: bool, timeout_ns: usize) WaitError!usize {
+pub fn wait(reasons: ?[]WaitReason, timeout_ns: usize) WaitError!usize {
     const count, const addr = if (reasons) |r|
         .{ r.len, @intFromPtr(r.ptr) }
     else
         .{ 0, 0 };
-    return unpackResult(WaitError, syscall4(.wait, count, addr, @intFromBool(wait_all), timeout_ns));
+    return unpackResult(WaitError, syscall3(.wait, count, addr, timeout_ns));
 }
 
 pub const WakeError = error{InvalidParameter};
@@ -144,6 +145,11 @@ pub const TranslateError = error{Exists};
 pub fn translate(virtual: *anyopaque) TranslateError!*anyopaque {
     const addr = try unpackResult(TranslateError, syscall1(.translate, @intFromPtr(virtual)));
     return @ptrFromInt(addr);
+}
+
+pub const AcknowledgeError = error{InvalidParameter};
+pub fn acknowledge(source: u32) AcknowledgeError!void {
+    _ = try unpackResult(AcknowledgeError, syscall1(.acknowledge, source));
 }
 
 pub const RegionDescription = packed struct {
@@ -165,6 +171,7 @@ pub const WaitReason = extern struct {
     payload: extern union {
         futex: Futex,
         child_process: ChildProcess,
+        interrupt: Interrupt,
     },
     result: usize = undefined,
     tag: Tag,
@@ -175,9 +182,13 @@ pub const WaitReason = extern struct {
     pub const ChildProcess = extern struct {
         pid: usize,
     };
+    pub const Interrupt = extern struct {
+        source: u32,
+    };
     pub const Tag = enum(u8) {
         futex,
         child_process,
+        interrupt,
     };
 };
 

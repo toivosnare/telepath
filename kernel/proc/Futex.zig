@@ -155,12 +155,12 @@ pub fn wake(process: *Process, virtual_address: UserVirtualAddress, count: usize
             }
             defer p.lock.unlock();
 
-            log.debug("Popped Process id={d} from Futex address=0x{x}", .{ process.id, physical_address });
+            log.debug("Popped Process id={d} from Futex address=0x{x}", .{ p.id, physical_address });
             futex.head = wait_reason.payload.futex.next;
-            wait_reason.payload.futex.next = null;
-            wait_reason.completed = true;
-            wait_reason.result = 0;
-            p.waitCheck();
+
+            p.waitComplete(wait_reason, 0);
+            proc.scheduler.enqueue(p);
+
             result += 1;
             if (wait_reason == futex.tail) {
                 futex.tail = null;

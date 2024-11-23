@@ -31,7 +31,6 @@ context: Context,
 wait_reason_count: usize,
 wait_reasons: [max_wait_reasons]WaitReason,
 wait_reasons_user: []libt.syscall.WaitReason,
-wait_all: bool,
 wait_timeout_next: ?*Process,
 wait_timeout_time: u64,
 scheduler_next: ?*Process,
@@ -138,6 +137,7 @@ pub const WaitReason = struct {
             none,
             futex,
             child_process,
+            interrupt,
         };
         none: void,
         futex: struct {
@@ -145,6 +145,10 @@ pub const WaitReason = struct {
             next: ?*WaitReason,
         },
         child_process: Process.Id,
+        interrupt: struct {
+            source: u32,
+            next: ?*WaitReason,
+        },
     },
 };
 
@@ -417,19 +421,13 @@ pub fn waitReasonAllocate(self: *Process) !*WaitReason {
     return wait_reason;
 }
 
-pub fn waitCheck(self: *Process) void {
-    if (self.wait_all) {
-        for (self.waitReasons()) |*wait_reason| {
-            if (!wait_reason.completed)
-                return;
-        }
-        log.debug("All wait reasons of Process id={d} are complete", .{self.id});
-    } else {
-        self.waitReasonsClear();
-        log.debug("Wait reason of Process id={d} is complete", .{self.id});
-    }
+pub fn waitComplete(self: *Process, wait_reason: *WaitReason, result: usize) void {
+    log.debug("Wait reason of Process id={d} is complete", .{self.id});
+    wait_reason.completed = true;
+    wait_reason.result = result;
+    wait_reason.payload = .{ .none = {} };
+    self.waitReasonsClear();
     proc.timeout.remove(self);
-    proc.scheduler.enqueue(self);
 }
 
 pub fn waitReasonsClear(self: *Process) void {
@@ -438,7 +436,9 @@ pub fn waitReasonsClear(self: *Process) void {
         if (wait_reason.payload == .futex and !wait_reason.completed) {
             Futex.remove(self, wait_reason.payload.futex.address);
         } else if (wait_reason.payload == .child_process) {
-            wait_reason.payload.child_process = 0;
+            {}
+        } else if (wait_reason.payload == .interrupt and !wait_reason.completed) {
+            proc.interrupt.remove(self, wait_reason.payload.interrupt.source);
         }
     }
 }
@@ -448,24 +448,11 @@ pub fn waitCopyResult(self: *Process) void {
         return;
     log.debug("Process id={d} copying wait result to user", .{self.id});
 
-    if (self.wait_all) {
-        var all_completed: bool = true;
-        for (self.waitReasons(), self.wait_reasons_user) |*kernel, *user| {
-            if (kernel.completed) {
-                user.result = kernel.result;
-            } else {
-                all_completed = false;
-            }
-        }
-        if (all_completed)
-            self.context.a0 = self.wait_reason_count;
-    } else {
-        for (0.., self.waitReasons(), self.wait_reasons_user) |index, *kernel, *user| {
-            if (kernel.completed) {
-                user.result = kernel.result;
-                self.context.a0 = index;
-                break;
-            }
+    for (0.., self.waitReasons(), self.wait_reasons_user) |index, *kernel, *user| {
+        if (kernel.completed) {
+            user.result = kernel.result;
+            self.context.a0 = index;
+            break;
         }
     }
     self.waitClear();
@@ -480,7 +467,6 @@ pub fn waitClear(self: *Process) void {
         wait_reason.payload = .{ .none = {} };
     }
     self.wait_reasons_user = undefined;
-    self.wait_all = false;
     self.wait_timeout_next = null;
     self.wait_timeout_time = 0;
 }
@@ -508,12 +494,10 @@ pub fn exit(self: *Process, exit_code: usize) void {
 
     for (parent.waitReasons()) |*wait_reason| {
         if (!wait_reason.completed and wait_reason.payload == .child_process and wait_reason.payload.child_process == self.id) {
-            wait_reason.payload = .{ .child_process = 0 };
-            wait_reason.completed = true;
-            wait_reason.result = exit_code;
+            parent.waitComplete(wait_reason, exit_code);
+            proc.scheduler.enqueue(parent);
         }
     }
-    parent.waitCheck();
     parent.kill(self);
 }
 

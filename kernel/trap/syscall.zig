@@ -314,6 +314,9 @@ pub fn wait(process: *Process) WaitError!usize {
             } else if (reason.tag == .child_process) blk: {
                 const child_pid = reason.payload.child_process.pid;
                 break :blk process.waitChildProcess(child_pid);
+            } else if (reason.tag == .interrupt) blk: {
+                const source = reason.payload.interrupt.source;
+                break :blk proc.interrupt.wait(process, source);
             } else blk: {
                 break :blk error.InvalidParameter;
             };
@@ -324,10 +327,9 @@ pub fn wait(process: *Process) WaitError!usize {
             };
         }
         process.wait_reasons_user = reasons;
-        process.wait_all = process.context.a3 != 0;
     }
 
-    const timeout_ns = process.context.a4;
+    const timeout_ns = process.context.a3;
     proc.timeout.wait(process, timeout_ns);
     process.state = .waiting;
 
@@ -348,4 +350,10 @@ pub const TranslateError = libt.syscall.TranslateError;
 pub fn translate(process: *Process) TranslateError!usize {
     const virtual_address = process.context.a1;
     return process.translate(virtual_address);
+}
+
+pub const AcknowledgeError = libt.syscall.AcknowledgeError;
+pub fn acknowledge(process: *Process) AcknowledgeError!usize {
+    const source = math.cast(u32, process.context.a1) orelse return error.InvalidParameter;
+    return proc.interrupt.complete(process, source);
 }

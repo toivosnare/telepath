@@ -62,10 +62,12 @@ export fn bootHartMain(boot_hart_id: Hart.Id, fdt_physical_start: PhysicalAddres
     const kernel_size = @intFromPtr(&kernel_linker_end) - @intFromPtr(&kernel_linker_start);
     const kernel_physical_end = kernel_physical_start + kernel_size;
     mm.kernel_size = math.divCeil(usize, kernel_size, @sizeOf(Page)) catch unreachable;
+    const kernel_offset = mm.kernel_start -% kernel_physical_start;
 
     const heap_physical_start = mem.alignForward(PhysicalAddress, kernel_physical_end, @sizeOf(Page));
     const heap_physical_end = mem.alignBackward(PhysicalAddress, pr.ram_physical_end, @sizeOf(Page));
     mm.logical_size = (heap_physical_end - heap_physical_start) / @sizeOf(Page);
+    const logical_offset = mm.logical_start -% heap_physical_start;
     assert(heap_physical_start < heap_physical_end);
 
     var kernel_physical_slice: ConstPageFrameSlice = undefined;
@@ -92,6 +94,14 @@ export fn bootHartMain(boot_hart_id: Hart.Id, fdt_physical_start: PhysicalAddres
     logical_slice.ptr = @ptrFromInt(mm.logical_start);
     logical_slice.len = mm.logical_size;
 
+    var plic_physical_slice: ConstPageFrameSlice = undefined;
+    plic_physical_slice.ptr = @ptrFromInt(pr.plic_physical_start);
+    plic_physical_slice.len = math.divCeil(usize, pr.plic_size, @sizeOf(Page)) catch unreachable;
+
+    var plic_slice: ConstPageSlice = undefined;
+    plic_slice.ptr = @ptrFromInt(@intFromPtr(&trap.plic) +% kernel_offset);
+    plic_slice.len = plic_physical_slice.len;
+
     var tix_allocations: PageSlice = undefined;
     var fdt_allocations: PageSlice = undefined;
     mm.init(heap_physical_slice, tix_physical_slice, fdt_physical_slice, &tix_allocations, &fdt_allocations);
@@ -102,6 +112,7 @@ export fn bootHartMain(boot_hart_id: Hart.Id, fdt_physical_start: PhysicalAddres
     init_process.page_table.mapRange(logical_slice, heap_physical_slice, .{ .valid = true, .readable = true, .writable = true, .global = true }) catch @panic("OOM");
     // TODO: Map different parts of the kernel with different permissions.
     init_process.page_table.mapRange(kernel_slice, kernel_physical_slice, .{ .valid = true, .readable = true, .writable = true, .executable = true, .global = true }) catch @panic("OOM");
+    init_process.page_table.mapRange(plic_slice, plic_physical_slice, .{ .valid = true, .readable = true, .writable = true, .global = true }) catch @panic("OOM");
 
     log.info("Loading TIX from physical address 0x{x}", .{pr.initrd_physical_start});
     const tix_header: *tix.Header = @ptrFromInt(pr.initrd_physical_start);
@@ -170,8 +181,8 @@ export fn bootHartMain(boot_hart_id: Hart.Id, fdt_physical_start: PhysicalAddres
         .asid = 0,
         .mode = .sv39,
     };
-    mm.logical_offset = mm.logical_start -% heap_physical_start;
-    mm.kernel_offset = mm.kernel_start -% kernel_physical_start;
+    mm.logical_offset = logical_offset;
+    mm.kernel_offset = kernel_offset;
     trampoline(0, satp, mm.kernel_offset);
 }
 
@@ -195,9 +206,9 @@ var harts_ready: atomic.Value(usize) = atomic.Value(usize).init(0);
 export fn main(hart_index: Hart.Index) noreturn {
     if (hart_index == 0) {
         writer.writeFn = writeFn;
-        trap.onAddressTranslationEnabled();
-        mm.page_allocator.onAddressTranslationEnabled();
         proc.onAddressTranslationEnabled();
+        trap.onAddressTranslationEnabled(hart_index);
+        mm.page_allocator.onAddressTranslationEnabled();
 
         log.info("Address translation enabled for boot hart. Bringing up other harts", .{});
         for (proc.harts[1..], 1..) |*secondary_hart, i|
@@ -212,7 +223,7 @@ export fn main(hart_index: Hart.Index) noreturn {
         log.info("All harts ready", .{});
         _ = harts_ready.fetchAdd(1, .monotonic);
     } else {
-        trap.onAddressTranslationEnabled();
+        trap.onAddressTranslationEnabled(hart_index);
         log.info("Secondary hart index={d} id={d} ready", .{ hart_index, proc.harts[hart_index].id });
         _ = harts_ready.fetchAdd(1, .monotonic);
         while (harts_ready.load(.monotonic) < proc.harts.len) {}
