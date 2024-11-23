@@ -37,7 +37,7 @@ scheduler_next: ?*Process,
 killed: bool,
 
 const max_children = 16;
-const max_regions = 32;
+const max_regions = 64;
 const max_wait_reasons = 8;
 
 pub const Id = usize;
