@@ -13,6 +13,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     }, &[_]libt.ServiceOptions{
         .{ .name = "stdout", .service = service.byte_stream },
+        .{ .name = "disk", .service = service.disk_driver },
     });
 
     b.installArtifact(exe);

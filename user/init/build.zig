@@ -16,10 +16,14 @@ pub fn build(b: *Build) void {
     const @"smp-test" = b.dependency("smp-test", .{
         .optimize = optimize,
     });
+    const @"virtio-blk" = b.dependency("virtio-blk", .{
+        .optimize = optimize,
+    });
 
     const drivers = [_]*Step.Compile{
         ns16550a.artifact("ns16550a"),
         @"smp-test".artifact("smp-test"),
+        @"virtio-blk".artifact("virtio-blk"),
     };
 
     const tar = b.addSystemCommand(&[_][]const u8{ "tar", "--transform=s/.*\\///", "-cPf" });

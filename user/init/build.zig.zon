@@ -12,6 +12,9 @@
         .@"smp-test" = .{
             .path = "../smp-test",
         },
+        .@"virtio-blk" = .{
+            .path = "../virtio-blk",
+        },
     },
     .paths = .{
         "build.zig",
