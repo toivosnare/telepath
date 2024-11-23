@@ -142,7 +142,7 @@ pub var kernel_size: usize = undefined; // In pages.
 pub var kernel_offset: usize = 0;
 
 const KERNEL_STACK_SIZE_TOTAL = proc.MAX_HARTS * entry.KERNEL_STACK_SIZE_PER_HART;
-pub export var kernel_stack: [KERNEL_STACK_SIZE_TOTAL]u8 linksection(".bss") = undefined;
+pub export var kernel_stack: [KERNEL_STACK_SIZE_TOTAL]u8 align(@sizeOf(Page)) linksection(".bss") = undefined;
 
 pub fn init(
     heap: PageFrameSlice,
