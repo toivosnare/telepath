@@ -7,6 +7,7 @@ const Mutex = libt.sync.Mutex;
 const Condvar = libt.sync.Condvar;
 
 pub const byte_stream = @import("service/byte_stream.zig");
+pub const disk_driver = @import("service/disk_driver.zig");
 
 pub fn hash(comptime Service: type) u32 {
     var result: u32 = undefined;
