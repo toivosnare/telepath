@@ -1,5 +1,6 @@
 const std = @import("std");
 const assert = std.debug.assert;
+const AnyWriter = std.io.AnyWriter;
 const Keccak = std.crypto.hash.sha3.Keccak(1600, 32, 0x06, 24);
 const libt = @import("libt.zig");
 const Mutex = libt.sync.Mutex;
@@ -234,5 +235,18 @@ pub fn Channel(comptime T: type, comptime c: usize, comptime direction: enum { r
                 }
             };
         };
+
+        fn writeFn(self_opaque: *const anyopaque, bytes: []const u8) !usize {
+            const self: *Self = @constCast(@alignCast(@ptrCast(self_opaque)));
+            self.writeSlice(bytes);
+            return bytes.len;
+        }
+
+        pub fn writer(self: *Self) AnyWriter {
+            return .{
+                .context = self,
+                .writeFn = writeFn,
+            };
+        }
     };
 }
