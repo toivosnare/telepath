@@ -137,7 +137,7 @@ pub const user_virtual_end: UserVirtualAddress = libt.address_space_end;
 pub const logical_start: LogicalAddress = 0xFFFFFFC000000000;
 pub var logical_size: usize = undefined; // In pages.
 pub var logical_offset: usize = 0;
-pub const kernel_start: KernelVirtualAddress = 0xFFFFFFFFFF000000;
+pub const kernel_start: KernelVirtualAddress = 0xFFFFFFFFF0000000;
 pub var kernel_size: usize = undefined; // In pages.
 pub var kernel_offset: usize = 0;
 
