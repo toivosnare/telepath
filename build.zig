@@ -38,6 +38,8 @@ pub fn build(b: *std.Build) void {
         "default",
         "-smp",
         "2",
+        "-m",
+        "1G",
         "-kernel",
     };
     const run_cmd = b.addSystemCommand(&QEMU_ARGV);
