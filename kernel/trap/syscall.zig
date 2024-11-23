@@ -343,3 +343,9 @@ pub fn wake(process: *Process) WakeError!usize {
     const waiter_count = process.context.a2;
     return proc.Futex.wake(process, virtual_address, waiter_count);
 }
+
+pub const TranslateError = libt.syscall.TranslateError;
+pub fn translate(process: *Process) TranslateError!usize {
+    const virtual_address = process.context.a1;
+    return process.translate(virtual_address);
+}

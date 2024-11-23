@@ -130,6 +130,7 @@ fn handleSyscall(current_process: *Process) noreturn {
         .free => syscall.free(current_process),
         .wait => syscall.wait(current_process),
         .wake => syscall.wake(current_process),
+        .translate => syscall.translate(current_process),
     };
     current_process.context.a0 = libt.syscall.packResult(result);
     proc.scheduler.scheduleCurrent(current_process);

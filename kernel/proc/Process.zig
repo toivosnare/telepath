@@ -547,6 +547,16 @@ fn die(self: *Process) void {
     proc.free(self);
 }
 
+pub fn translate(self: Process, virtual: UserVirtualAddress) !PhysicalAddress {
+    var entry: ?*RegionEntry = self.region_entries_head;
+    while (entry) |e| : (entry = e.next) {
+        assert(e.start_address != null);
+        if (e.contains(virtual)) |physical|
+            return physical;
+    }
+    return error.Exists;
+}
+
 pub fn hasRegion(self: *Process, region: *const Region) ?*RegionEntry {
     for (&self.region_entries) |*region_entry| {
         if (region_entry.region == region)

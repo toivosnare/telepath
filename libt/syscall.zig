@@ -16,9 +16,10 @@ pub const Id = enum(usize) {
     free = 10,
     wait = 11,
     wake = 12,
+    translate = 13,
 };
 
-pub const Error = IdentifyError || ForkError || SpawnError || KillError || AllocateError || MapError || ShareError || RefcountError || UnmapError || WaitError || WakeError;
+pub const Error = IdentifyError || ForkError || SpawnError || KillError || AllocateError || MapError || ShareError || RefcountError || UnmapError || WaitError || WakeError || TranslateError;
 
 pub fn packResult(result: Error!usize) usize {
     if (result) |res| {
@@ -137,6 +138,12 @@ pub fn wait(reasons: ?[]WaitReason, wait_all: bool, timeout_ns: usize) WaitError
 pub const WakeError = error{InvalidParameter};
 pub fn wake(address: *const atomic.Value(u32), waiter_count: usize) WakeError!usize {
     return unpackResult(WakeError, syscall2(.wake, @intFromPtr(address), waiter_count));
+}
+
+pub const TranslateError = error{Exists};
+pub fn translate(virtual: *anyopaque) TranslateError!*anyopaque {
+    const addr = try unpackResult(TranslateError, syscall1(.translate, @intFromPtr(virtual)));
+    return @ptrFromInt(addr);
 }
 
 pub const RegionDescription = packed struct {
