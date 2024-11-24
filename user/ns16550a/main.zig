@@ -1,4 +1,6 @@
 const std = @import("std");
+const assert = std.debug.assert;
+const math = std.math;
 const mem = std.mem;
 const libt = @import("libt");
 const syscall = libt.syscall;
@@ -110,7 +112,7 @@ const Ns16550A = packed struct {
             .dlab = false,
         };
         self.ier = .{
-            .data_ready = false,
+            .data_ready = true,
             .thr_empty = false,
             .receiver_line_status = false,
             .modem_status = false,
@@ -123,7 +125,7 @@ const Ns16550A = packed struct {
             .tx_fifo_reset = true,
             .dma_mode = false,
             .enable_dma_end = false,
-            .fifo_trigger_level = .tl1,
+            .fifo_trigger_level = .tl8,
         };
         self.mcr = .{
             .dtr = false,
@@ -142,30 +144,73 @@ const Ns16550A = packed struct {
         while (!self.lsr.thr_empty) {}
         self.rbr_thr = c;
     }
+
+    pub fn getc(self: *volatile Self) ?u8 {
+        if (!self.lsr.data_ready)
+            return null;
+        return self.rbr_thr;
+    }
 };
 
 pub fn main(args: []usize) usize {
     _ = args;
 
     const physical_address = 0x10000000;
+    const interrupt_source = 0x0a;
     const region = syscall.allocate(1, .{ .readable = true, .writable = true }, @ptrFromInt(physical_address)) catch unreachable;
     const ns16550a: *volatile Ns16550A = @ptrCast(syscall.map(region, null) catch unreachable);
     ns16550a.init();
 
-    const stdin = @import("services").stdin;
-    while (true) {
-        stdin.mutex.lock();
-        defer stdin.mutex.unlock();
-
-        while (stdin.isEmpty())
-            stdin.empty.wait(&stdin.mutex);
-
-        const slice = stdin.unreadSlice();
+    const client = @import("services").client;
+    const tx_channel = &client.tx;
+    const rx_channel = &client.rx;
+    const tx_capacity = @typeInfo(@TypeOf(tx_channel)).Pointer.child.capacity;
+    const rx_capacity = @typeInfo(@TypeOf(rx_channel)).Pointer.child.capacity;
+    const tx_channel_index = 0;
+    const interrupt_index = 1;
+    var wait_reasons: [2]syscall.WaitReason = .{
+        .{ .tag = .futex, .payload = .{ .futex = .{ .address = &tx_channel.empty.state, .expected_value = undefined } } },
+        .{ .tag = .interrupt, .payload = .{ .interrupt = .{ .source = interrupt_source } } },
+    };
+    outer: while (true) {
+        tx_channel.mutex.lock();
+        const slice = tx_channel.unreadSlice();
         var it = slice.iterator();
         while (it.next()) |c| {
             ns16550a.putc(c);
         }
-        stdin.read_index = (stdin.read_index + slice.length()) % libt.service.byte_stream.provide.Type.capacity;
-        stdin.length -= slice.length();
+        tx_channel.read_index = (tx_channel.read_index + slice.length()) % tx_capacity;
+        tx_channel.length -= slice.length();
+        tx_channel.full.notify(.one);
+
+        const old_state = tx_channel.empty.state.load(.monotonic);
+        tx_channel.mutex.unlock();
+        wait_reasons[tx_channel_index].payload.futex.expected_value = old_state;
+
+        while (true) {
+            const index = syscall.wait(&wait_reasons, math.maxInt(usize)) catch unreachable;
+            if (index == tx_channel_index) {
+                _ = syscall.unpackResult(syscall.WaitError, wait_reasons[tx_channel_index].result) catch |err| switch (err) {
+                    error.WouldBlock => {},
+                    else => @panic("wait errror"),
+                };
+                continue :outer;
+            } else {
+                assert(index == interrupt_index);
+                assert(syscall.unpackResult(syscall.WaitError, wait_reasons[interrupt_index].result) catch 1 == 0);
+
+                syscall.acknowledge(interrupt_source) catch unreachable;
+
+                rx_channel.mutex.lock();
+                while (ns16550a.getc()) |c| {
+                    rx_channel.buffer[rx_channel.write_index] = c;
+                    rx_channel.write_index = (rx_channel.write_index + 1) % rx_capacity;
+                    if (!rx_channel.isFull())
+                        rx_channel.length += 1;
+                }
+                rx_channel.empty.notify(.one);
+                rx_channel.mutex.unlock();
+            }
+        }
     }
 }

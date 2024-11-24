@@ -12,7 +12,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     }, &[_]libt.ServiceOptions{
-        .{ .name = "stdin", .service = service.byte_stream, .mode = .provide },
+        .{ .name = "client", .service = service.serial_driver, .mode = .provide },
     });
 
     b.installArtifact(exe);

@@ -104,8 +104,7 @@ var requests_physical_address: usize = undefined;
 
 pub fn main(args: []usize) !usize {
     _ = args;
-    const stdout = services.stdout;
-    const writer = stdout.writer();
+    const writer = services.serial.tx.writer();
     try writer.writeAll("Initializing virtio-blk driver.\n");
 
     const physical_address = 0x10008000;

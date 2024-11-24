@@ -12,7 +12,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     }, &[_]libt.ServiceOptions{
-        .{ .name = "stdout", .service = service.byte_stream },
+        .{ .name = "serial", .service = service.serial_driver },
         .{ .name = "client", .service = service.disk_driver, .mode = .provide },
     });
 

@@ -9,8 +9,7 @@ pub fn main(args: []usize) !void {
     _ = args;
 
     const services = @import("services");
-    const stdout = services.stdout;
-    const writer = stdout.writer();
+    const writer = services.serial.tx.writer();
 
     try writer.writeAll("Hello from smp-test.\n");
 
@@ -37,7 +36,7 @@ pub fn main(args: []usize) !void {
     libt.sleep(delay / 2) catch unreachable;
 
     while (true) {
-        stdout.write(letter);
+        try writer.writeByte(letter);
         libt.sleep(delay) catch unreachable;
     }
 }
