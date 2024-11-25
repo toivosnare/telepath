@@ -13,7 +13,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     }, &[_]libt.ServiceOptions{
         .{ .name = "serial", .service = service.serial_driver },
-        .{ .name = "disk", .service = service.disk_driver },
+        .{ .name = "block", .service = service.block_driver },
     });
 
     b.installArtifact(exe);

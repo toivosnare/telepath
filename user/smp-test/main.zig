@@ -17,13 +17,13 @@ pub fn main(args: []usize) !void {
 
     var sector: [512]u8 = undefined;
     if (pid % 2 == 0) {
-        services.disk.request.write(.{
+        services.block.request.write(.{
             .sector = 0,
             .address = @intFromPtr(syscall.translate(&sector) catch unreachable),
             .write = false,
             .token = 22,
         });
-        const response = services.disk.response.read();
+        const response = services.block.response.read();
         try writer.print("response: {}\n", .{response});
         try writer.print("sector: {any}\n", .{sector});
     }
