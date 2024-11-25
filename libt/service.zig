@@ -1,6 +1,8 @@
 const std = @import("std");
 const assert = std.debug.assert;
-const AnyWriter = std.io.AnyWriter;
+const io = std.io;
+const AnyWriter = io.AnyWriter;
+const AnyReader = io.AnyReader;
 const Keccak = std.crypto.hash.sha3.Keccak(1600, 32, 0x06, 24);
 const libt = @import("libt.zig");
 const Mutex = libt.sync.Mutex;
@@ -115,8 +117,8 @@ pub fn Channel(comptime T: type, comptime c: usize, comptime direction: enum { r
             assert(self.length >= result.len);
             const unread_slice = self.unreadSlice();
             unread_slice.readAssumeCapacity(result);
-            self.read_index = (self.read_index + result.length) % capacity;
-            self.length -= result.length;
+            self.read_index = (self.read_index + result.len) % capacity;
+            self.length -= result.len;
         }
 
         pub fn write(self: *Self, item: T) void {
@@ -237,16 +239,29 @@ pub fn Channel(comptime T: type, comptime c: usize, comptime direction: enum { r
             };
         };
 
-        fn writeFn(self_opaque: *const anyopaque, bytes: []const u8) !usize {
-            const self: *Self = @constCast(@alignCast(@ptrCast(self_opaque)));
-            self.writeSlice(bytes);
-            return bytes.len;
+        fn writeFn(context: *const anyopaque, buffer: []const u8) !usize {
+            const self: *Self = @constCast(@alignCast(@ptrCast(context)));
+            self.writeSlice(buffer);
+            return buffer.len;
         }
 
         pub fn writer(self: *Self) AnyWriter {
             return .{
                 .context = self,
                 .writeFn = writeFn,
+            };
+        }
+
+        pub fn readFn(context: *const anyopaque, buffer: []u8) !usize {
+            const self: *Self = @constCast(@alignCast(@ptrCast(context)));
+            self.readSlice(buffer);
+            return buffer.len;
+        }
+
+        pub fn reader(self: *Self) AnyReader {
+            return .{
+                .context = self,
+                .readFn = readFn,
             };
         }
     };
