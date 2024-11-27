@@ -51,6 +51,10 @@ pub fn wait(process: *Process, source: u32) !void {
     const hart_id = proc.harts[hart_index].id;
     trap.plic.setPriority(source, 1);
     trap.plic.enable(hart_id, source);
+
+    // FIXME: This is pretty bad. Force PLIC to re-evaluate.
+    // Needed in case this interrupt was pending before enabling.
+    trap.plic.setTreshold(hart_id, 0);
 }
 
 pub fn check(process: ?*Process, idle_hart_index: Hart.Index) noreturn {
