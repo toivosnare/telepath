@@ -30,8 +30,7 @@ pub const MAX_HARTS = 8;
 pub var hart_array: [MAX_HARTS]Hart = undefined;
 pub var harts: []Hart = undefined;
 
-// TODO: read from device tree.
-pub const ticks_per_ns: usize = 10;
+pub var ticks_per_us: usize = undefined;
 const MAX_PROCESSES = 64;
 
 pub var table: [MAX_PROCESSES]Process = undefined;

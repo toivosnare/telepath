@@ -128,12 +128,12 @@ pub fn free(region: usize) FreeError!void {
 }
 
 pub const WaitError = error{ InvalidParameter, WouldBlock, Timeout, NoPermission, Crashed };
-pub fn wait(reasons: ?[]WaitReason, timeout_ns: usize) WaitError!usize {
+pub fn wait(reasons: ?[]WaitReason, timeout_us: usize) WaitError!usize {
     const count, const addr = if (reasons) |r|
         .{ r.len, @intFromPtr(r.ptr) }
     else
         .{ 0, 0 };
-    return unpackResult(WaitError, syscall3(.wait, count, addr, timeout_ns));
+    return unpackResult(WaitError, syscall3(.wait, count, addr, timeout_us));
 }
 
 pub const WakeError = error{InvalidParameter};

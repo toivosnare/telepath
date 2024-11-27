@@ -12,15 +12,15 @@ const Spinlock = libt.sync.Spinlock;
 var lock: Spinlock = .{};
 var head: ?*Process = null;
 
-pub fn wait(process: *Process, timeout_ns: u64) void {
+pub fn wait(process: *Process, timeout_us: u64) void {
     assert(process.wait_timeout_next == null);
-    if (timeout_ns == math.maxInt(u64))
+    if (timeout_us == math.maxInt(u64))
         return;
 
-    log.debug("Adding Process id={d} to the timeout queue with timeout of {d} ns", .{ process.id, timeout_ns });
+    log.debug("Adding Process id={d} to the timeout queue with timeout of {d} us", .{ process.id, timeout_us });
 
     // TODO: Can overflow?
-    process.wait_timeout_time = riscv.time.read() + proc.ticks_per_ns * timeout_ns;
+    process.wait_timeout_time = riscv.time.read() + proc.ticks_per_us * timeout_us;
 
     lock.lock();
     defer lock.unlock();

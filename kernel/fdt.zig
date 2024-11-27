@@ -20,6 +20,7 @@ const ParseResult = struct {
     clint_physical_start: PhysicalAddress,
     clint_size: usize,
     clint_physical_end: PhysicalAddress,
+    timebase_frequency: usize,
 };
 pub fn parse(fdt_physical_start: PhysicalAddress) ParseResult {
     var traverser: dtb.Traverser = undefined;
@@ -32,6 +33,7 @@ pub fn parse(fdt_physical_start: PhysicalAddress) ParseResult {
         plic,
         clint,
         hart,
+        cpus,
     };
     var state: State = .start;
     var initrd_start: ?u32 = null;
@@ -42,6 +44,7 @@ pub fn parse(fdt_physical_start: PhysicalAddress) ParseResult {
     var plic_size: ?u32 = null;
     var clint_start: ?u32 = null;
     var clint_size: ?u32 = null;
+    var timebase_frequency: ?u32 = null;
     var hart_count: usize = 1;
 
     while (true) {
@@ -58,6 +61,8 @@ pub fn parse(fdt_physical_start: PhysicalAddress) ParseResult {
                     state = .clint;
                 } else if (mem.startsWith(u8, b, "cpu@")) {
                     state = .hart;
+                } else if (mem.startsWith(u8, b, "cpus")) {
+                    state = .cpus;
                 }
             },
             .Prop => |p| {
@@ -96,6 +101,11 @@ pub fn parse(fdt_physical_start: PhysicalAddress) ParseResult {
                             }
                         }
                     },
+                    .cpus => {
+                        if (mem.eql(u8, p.name, "timebase-frequency")) {
+                            timebase_frequency = mem.bigToNative(u32, @as(*const u32, @ptrCast(@alignCast(p.value))).*);
+                        }
+                    },
                     else => continue,
                 }
             },
@@ -123,6 +133,8 @@ pub fn parse(fdt_physical_start: PhysicalAddress) ParseResult {
         @panic("CLINT start address was not found in the device tree.");
     } else if (clint_size == null) {
         @panic("CLINT size was not found in the device tree.");
+    } else if (timebase_frequency == null) {
+        @panic("timebase frequency was not found in the device tree.");
     }
     proc.harts = proc.hart_array[0..hart_count];
     return .{
@@ -140,5 +152,6 @@ pub fn parse(fdt_physical_start: PhysicalAddress) ParseResult {
         .clint_physical_start = @intCast(clint_start.?),
         .clint_size = @intCast(clint_size.?),
         .clint_physical_end = @intCast(clint_start.? + clint_size.?),
+        .timebase_frequency = @intCast(timebase_frequency.?),
     };
 }

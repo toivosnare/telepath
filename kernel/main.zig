@@ -55,6 +55,7 @@ export fn bootHartMain(boot_hart_id: Hart.Id, fdt_physical_start: PhysicalAddres
 
     log.info("Loading FDT from physical address 0x{x}", .{fdt_physical_start});
     const pr = fdt.parse(fdt_physical_start);
+    proc.ticks_per_us = pr.timebase_frequency / std.time.us_per_s;
 
     mm.ram_physical_slice.ptr = @ptrFromInt(mem.alignBackward(PhysicalAddress, pr.ram_physical_start, @sizeOf(Page)));
     mm.ram_physical_slice.len = math.divCeil(usize, pr.ram_size, @sizeOf(Page)) catch unreachable;

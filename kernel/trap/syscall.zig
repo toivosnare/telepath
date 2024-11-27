@@ -328,8 +328,8 @@ pub fn wait(process: *Process) WaitError!usize {
         process.wait_reasons_user = reasons;
     }
 
-    const timeout_ns = process.context.a3;
-    proc.timeout.wait(process, timeout_ns);
+    const timeout_us = process.context.a3;
+    proc.timeout.wait(process, timeout_us);
     process.state = .waiting;
 
     log.debug("Process id={d} is waiting with {d} reasons", .{ process.id, reasons_count });

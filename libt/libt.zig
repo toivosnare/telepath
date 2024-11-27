@@ -11,23 +11,23 @@ comptime {
         _ = @import("start.zig");
 }
 
-pub fn waitFutex(address: *atomic.Value(u32), expected_value: u32, timeout_ns: usize) syscall.WaitError!void {
+pub fn waitFutex(address: *atomic.Value(u32), expected_value: u32, timeout_us: usize) syscall.WaitError!void {
     var reason: [1]syscall.WaitReason = .{.{ .tag = .futex, .payload = .{ .futex = .{ .address = address, .expected_value = expected_value } } }};
-    const index = try syscall.wait(&reason, timeout_ns);
+    const index = try syscall.wait(&reason, timeout_us);
     assert(index == 0);
     _ = try syscall.unpackResult(syscall.WaitError, reason[0].result);
 }
 
-pub fn waitChildProcess(pid: usize, timeout_ns: usize) syscall.WaitError!usize {
+pub fn waitChildProcess(pid: usize, timeout_us: usize) syscall.WaitError!usize {
     var reason: [1]syscall.WaitReason = .{.{ .tag = .child_process, .payload = .{ .child_process = .{ .pid = pid } } }};
-    const index = try syscall.wait(&reason, timeout_ns);
+    const index = try syscall.wait(&reason, timeout_us);
     assert(index == 0);
     return syscall.unpackResult(syscall.WaitError, reason[0].result);
 }
 
-pub fn waitInterrupt(source: u32, timeout_ns: usize) syscall.WaitError!void {
+pub fn waitInterrupt(source: u32, timeout_us: usize) syscall.WaitError!void {
     var reason: [1]syscall.WaitReason = .{.{ .tag = .interrupt, .payload = .{ .interrupt = .{ .source = source } } }};
-    const index = try syscall.wait(&reason, timeout_ns);
+    const index = try syscall.wait(&reason, timeout_us);
     assert(index == 0);
     _ = try syscall.unpackResult(syscall.WaitError, reason[0].result);
 }

@@ -13,7 +13,7 @@ const sbi = @import("sbi");
 const libt = @import("libt");
 const Spinlock = libt.sync.Spinlock;
 
-const quantum_ns: usize = 50_000;
+const quantum_us: usize = 50_000;
 
 var lock: Spinlock = .{};
 var head: ?*Process = null;
@@ -24,7 +24,7 @@ pub fn schedule(current_process: ?*Process, next_process: *Process, hart_index: 
     switchContext(current_process, next_process, hart_index);
     if (current_process == null)
         riscv.sstatus.clear(.spp);
-    sbi.time.setTimer(riscv.time.read() + proc.ticks_per_ns * quantum_ns);
+    sbi.time.setTimer(riscv.time.read() + proc.ticks_per_us * quantum_us);
     returnToUserspace(&next_process.context);
 }
 
@@ -38,13 +38,13 @@ pub fn scheduleNext(current_process: ?*Process, hart_index: Hart.Index) noreturn
         break :blk current_process.?;
     } else {
         log.debug("No processes in the ready queue. Entering idle on hart index={d}", .{hart_index});
-        sbi.time.setTimer(riscv.time.read() + proc.ticks_per_ns * quantum_ns);
+        sbi.time.setTimer(riscv.time.read() + proc.ticks_per_us * quantum_us);
         idle(@intFromPtr(&mm.kernel_stack) + (hart_index + 1) * entry.KERNEL_STACK_SIZE_PER_HART, hart_index);
     };
 
     if (current_process == null)
         riscv.sstatus.clear(.spp);
-    sbi.time.setTimer(riscv.time.read() + proc.ticks_per_ns * quantum_ns);
+    sbi.time.setTimer(riscv.time.read() + proc.ticks_per_us * quantum_us);
     returnToUserspace(&next_process.context);
 }
 
