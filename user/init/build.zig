@@ -25,6 +25,9 @@ pub fn build(b: *Build) void {
         @"smp-test".artifact("smp-test"),
         @"virtio-blk".artifact("virtio-blk"),
     };
+    for (drivers) |driver| {
+        b.installArtifact(driver);
+    }
 
     const tar = b.addSystemCommand(&[_][]const u8{ "tar", "--transform=s/.*\\///", "-cPf" });
     const driver_archive = tar.addOutputFileArg("driver_archive.tar");

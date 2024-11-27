@@ -1,6 +1,8 @@
 const std = @import("std");
+const Build = std.Build;
+const Step = Build.Step;
 
-pub fn build(b: *std.Build) void {
+pub fn build(b: *Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const kernel_package = b.dependency("kernel", .{
@@ -13,7 +15,10 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     const init_elf = init_package.artifact("init.elf");
-    b.installArtifact(init_elf);
+    for (init_package.builder.getInstallStep().dependencies.items) |step| {
+        const install_step = step.cast(Step.InstallArtifact) orelse continue;
+        b.installArtifact(install_step.artifact);
+    }
 
     const elf2tix_package = b.dependency("elf2tix", .{
         .optimize = optimize,
