@@ -295,7 +295,6 @@ pub fn free(process: *Process) FreeError!usize {
     return 0;
 }
 
-// TODO: Allow waiting on interrupts.
 pub const WaitError = libt.syscall.WaitError;
 pub fn wait(process: *Process) WaitError!usize {
     assert(process.wait_reason_count == 0);
