@@ -15,6 +15,9 @@
         .@"virtio-blk" = .{
             .path = "../virtio-blk",
         },
+        .shell = .{
+            .path = "../shell",
+        },
     },
     .paths = .{
         "build.zig",

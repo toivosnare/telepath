@@ -71,9 +71,8 @@ pub fn main() usize {
     const virtio_blk_elf = driver_map.get("virtio-blk") orelse return 4;
     _ = loadElf(virtio_blk_elf, &service_map) catch return 5;
 
-    const smp_test_elf = driver_map.get("smp-test") orelse return 4;
-    _ = loadElf(smp_test_elf, &service_map) catch return 5;
-    _ = loadElf(smp_test_elf, &service_map) catch return 6;
+    const shell_elf = driver_map.get("shell") orelse return 6;
+    _ = loadElf(shell_elf, &service_map) catch return 7;
 
     libt.sleep(math.maxInt(usize)) catch unreachable;
     unreachable;

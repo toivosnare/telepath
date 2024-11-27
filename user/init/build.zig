@@ -19,11 +19,15 @@ pub fn build(b: *Build) void {
     const @"virtio-blk" = b.dependency("virtio-blk", .{
         .optimize = optimize,
     });
+    const shell = b.dependency("shell", .{
+        .optimize = optimize,
+    });
 
     const drivers = [_]*Step.Compile{
         ns16550a.artifact("ns16550a"),
         @"smp-test".artifact("smp-test"),
         @"virtio-blk".artifact("virtio-blk"),
+        shell.artifact("shell"),
     };
     for (drivers) |driver| {
         b.installArtifact(driver);
