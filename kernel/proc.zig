@@ -123,8 +123,7 @@ pub fn free(process: *Process) void {
         process.freeRegionEntry(region_entry) catch unreachable;
     }
     process.region_entries_head = null;
-    // TODO: page table?
-    // self.page_table = ;
+    process.page_table.free();
     @memset(mem.asBytes(&process.context), 0);
     process.waitClear();
     process.scheduler_next = null;

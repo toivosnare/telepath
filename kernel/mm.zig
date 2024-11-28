@@ -46,6 +46,10 @@ pub const PageTable = struct {
             user: bool = false,
             global: bool = false,
         };
+
+        pub fn isLeaf(self: *Entry) bool {
+            return self.permissions.readable or self.permissions.writable or self.permissions.executable;
+        }
     };
     pub const entry_count = @sizeOf(Page) / @sizeOf(Entry);
     pub const Level = u4;
@@ -105,6 +109,31 @@ pub const PageTable = struct {
 
     pub fn index(virtual: ConstPagePtr, level: Level) Index {
         return @intCast((@intFromPtr(virtual) >> (12 + @as(u6, 9) * level)) & 0b111111111);
+    }
+
+    pub fn free(self: Ptr) void {
+        // Avoid freeing kernel page tables.
+        for (self.entries[0 .. entry_count / 2]) |*pte| {
+            if (pte.permissions.valid and !pte.isLeaf())
+                pte.physical_page_number.toPageTable().freeImpl();
+        }
+
+        var slice: PageSlice = undefined;
+        slice.ptr = @ptrCast(self);
+        slice.len = 1;
+        page_allocator.free(slice);
+    }
+
+    fn freeImpl(self: Ptr) void {
+        for (&self.entries) |*pte| {
+            if (pte.permissions.valid and !pte.isLeaf())
+                pte.physical_page_number.toPageTable().free();
+        }
+
+        var slice: PageSlice = undefined;
+        slice.ptr = @ptrCast(self);
+        slice.len = 1;
+        page_allocator.free(slice);
     }
 
     comptime {
