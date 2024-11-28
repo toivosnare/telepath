@@ -12,7 +12,7 @@ const Process = proc.Process;
 const Hart = proc.Hart;
 
 pub const Plic = @import("trap/plic.zig").Plic;
-pub var plic: Plic align(@sizeOf(mm.Page)) linksection(".bss") = undefined;
+pub var plic: Plic align(@sizeOf(mm.Page)) linksection(".plic") = undefined;
 
 pub fn init() void {
     riscv.stvec.write(.{
