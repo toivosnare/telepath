@@ -23,6 +23,7 @@ pub fn identify(process: *Process) IdentifyError!usize {
     return process.id;
 }
 
+// TODO: fork?
 pub const ForkError = libt.syscall.ForkError;
 pub fn fork(process: *Process) ForkError!usize {
     log.debug("Process id={d} is forking", .{process.id});
@@ -33,7 +34,6 @@ pub fn fork(process: *Process) ForkError!usize {
     // process.children.append(child_process) catch return error.OutOfMemory;
     // child_process.parent = process;
 
-    // // TODO: copy region entries properly.
     // child_process.region_entries_head = process.region_entries_head;
 
     // @memcpy(

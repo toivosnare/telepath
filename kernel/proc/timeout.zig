@@ -19,7 +19,7 @@ pub fn wait(process: *Process, timeout_us: u64) void {
 
     log.debug("Adding Process id={d} to the timeout queue with timeout of {d} us", .{ process.id, timeout_us });
 
-    // TODO: Can overflow?
+    // FIXME: Can overflow?
     process.wait_timeout_time = riscv.time.read() + proc.ticks_per_us * timeout_us;
 
     lock.lock();

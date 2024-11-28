@@ -113,8 +113,8 @@ const Node = struct {
     }
 };
 
-// TODO: bitfield might overlap with the holes?
-// TODO: there might be a case where max_nodes must be decremented by one?
+// FIXME: bitfield might overlap with the holes?
+// FIXME: there might be a case where max_nodes must be decremented by one?
 pub fn init(
     heap: PageFrameSlice,
     tix: PageFrameSlice,

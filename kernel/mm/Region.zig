@@ -43,7 +43,7 @@ pub fn allocate(size: usize, physical_address: PhysicalAddress) !*Region {
     defer region.lock.unlock();
     log.debug("Found free Region index={d}", .{region.index()});
 
-    // TODO: it is not possible to allocate physical address 0?
+    // FIXME: it is not possible to allocate physical address 0?
     if (physical_address == 0) {
         const order = math.log2_int_ceil(usize, size);
         region.allocation = try mm.page_allocator.allocate(order);
@@ -106,7 +106,7 @@ pub fn sizeInBytes(self: *Region) usize {
 }
 
 pub fn index(self: *const Region) Index {
-    // TODO: use pointer subtraction introduced in Zig 0.14.
+    // FIXME: use pointer subtraction introduced in Zig 0.14.
     return (@intFromPtr(self) - @intFromPtr(&table[0])) / @sizeOf(Region);
 }
 
