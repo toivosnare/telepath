@@ -33,13 +33,13 @@ pub const Flags = packed struct(u4) {
 
 pub fn Channel(comptime T: type, comptime c: usize, comptime direction: enum { receive, transmit, bidirectional }) type {
     return extern struct {
-        buffer: [capacity]T,
-        length: usize,
-        read_index: usize,
-        write_index: usize,
-        mutex: Mutex,
-        empty: Condvar,
-        full: Condvar,
+        buffer: [capacity]T = undefined,
+        length: usize = 0,
+        read_index: usize = 0,
+        write_index: usize = 0,
+        mutex: Mutex = .{},
+        empty: Condvar = .{},
+        full: Condvar = .{},
 
         pub const capacity: usize = c;
         const Self = @This();
