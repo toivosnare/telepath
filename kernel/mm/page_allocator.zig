@@ -11,7 +11,7 @@ const PageSlice = mm.PageSlice;
 const PageFrameSlice = mm.PageFrameSlice;
 const ConstPageFrameSlice = mm.ConstPageFrameSlice;
 
-pub const max_order = 12;
+pub const max_order = 13;
 pub const max_order_pages = 1 << (max_order - 1);
 
 var buckets: *[max_order]Bucket = undefined;

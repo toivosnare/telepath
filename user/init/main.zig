@@ -71,8 +71,11 @@ pub fn main() usize {
     const virtio_blk_elf = driver_map.get("virtio-blk") orelse return 4;
     _ = loadElf(virtio_blk_elf, &service_map) catch return 5;
 
-    const shell_elf = driver_map.get("shell") orelse return 6;
-    _ = loadElf(shell_elf, &service_map) catch return 7;
+    const file_system_elf = driver_map.get("file-system") orelse return 6;
+    _ = loadElf(file_system_elf, &service_map) catch return 7;
+
+    const shell_elf = driver_map.get("shell") orelse return 8;
+    _ = loadElf(shell_elf, &service_map) catch return 9;
 
     libt.sleep(math.maxInt(usize)) catch unreachable;
     unreachable;

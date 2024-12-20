@@ -15,6 +15,9 @@
         .@"virtio-blk" = .{
             .path = "../virtio-blk",
         },
+        .@"file-system" = .{
+            .path = "../file-system",
+        },
         .shell = .{
             .path = "../shell",
         },

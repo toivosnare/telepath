@@ -42,7 +42,7 @@ pub fn build(b: *Build) void {
         "-global",
         "virtio-mmio.force-legacy=false",
         "-drive",
-        "file=disk.raw,format=raw,id=test,if=none",
+        "file=fat:rw:fat-type=32:user/fs-root,format=raw,id=test,if=none",
         "-device",
         "virtio-blk-device,drive=test",
         "-bios",

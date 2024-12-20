@@ -19,6 +19,9 @@ pub fn build(b: *Build) void {
     const @"virtio-blk" = b.dependency("virtio-blk", .{
         .optimize = optimize,
     });
+    const @"file-system" = b.dependency("file-system", .{
+        .optimize = optimize,
+    });
     const shell = b.dependency("shell", .{
         .optimize = optimize,
     });
@@ -27,6 +30,7 @@ pub fn build(b: *Build) void {
         ns16550a.artifact("ns16550a"),
         @"smp-test".artifact("smp-test"),
         @"virtio-blk".artifact("virtio-blk"),
+        @"file-system".artifact("file-system"),
         shell.artifact("shell"),
     };
     for (drivers) |driver| {
