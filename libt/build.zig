@@ -129,7 +129,7 @@ fn generateLinkerScript(exe: *Step.Compile, options: []const ServiceOptions) Bui
         \\.rodata : ALIGN(0x1000) { *(.rodata .rodata.*)             } :rodata
         \\.text   : ALIGN(0x1000) { *(.text .text.*)                 } :text
         \\.data   : ALIGN(0x1000) { *(.data .data.* .sdata .sdata.*) } :data
-        \\.bss    : ALIGN(0x1000) { *(.bss .bss.*)                   } :data
+        \\.bss    : ALIGN(0x1000) { *(.bss .bss.* .sbss .sbss.*)     } :data
         \\
     ) catch @panic("OOM");
     inline for (options) |option| {
