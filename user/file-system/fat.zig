@@ -1,11 +1,48 @@
 const std = @import("std");
 const assert = std.debug.assert;
+const math = std.math;
 const mem = std.mem;
 const unicode = std.unicode;
 const cache = @import("cache.zig");
 
-pub var sectors_per_cluster: u8 = undefined;
-pub var fat_sector: usize = undefined;
+const VolumeBootRecord = extern struct {
+    jump: [3]u8,
+    oem_identifier: [8]u8,
+    bytes_per_sector: u16 align(1),
+    sectors_per_cluster: u8,
+    reserved_sectors: u16 align(1),
+    file_allocation_tables: u8,
+    root_directory_entries: u16 align(1),
+    total_sectors: u16 align(1),
+    media_descriptor_type: u8,
+    sectors_per_fat: u16 align(1),
+    sectors_per_track: u16 align(1),
+    heads: u16 align(1),
+    hidden_sectors: u32 align(1),
+    large_sector_count: u32 align(1),
+};
+
+var sectors_per_cluster: u8 = undefined;
+var fat_sector: usize = undefined;
+var first_data_sector: usize = undefined;
+
+pub fn init(vbr_sector: usize) usize {
+    const vbr_entry = cache.getSector(vbr_sector);
+    defer cache.returnSector(vbr_entry);
+    const vbr: *const VolumeBootRecord = @ptrCast(&vbr_entry.data);
+
+    sectors_per_cluster = vbr.sectors_per_cluster;
+    fat_sector = vbr_sector + vbr.reserved_sectors;
+    const root_directory_sector = fat_sector + vbr.file_allocation_tables * vbr.sectors_per_fat;
+    const root_directory_sectors = math.divCeil(usize, vbr.root_directory_entries * @sizeOf(DirectoryEntry), 512) catch unreachable;
+    first_data_sector = root_directory_sector + root_directory_sectors;
+
+    return root_directory_sector;
+}
+
+pub fn sectorFromCluster(cluster: usize) usize {
+    return first_data_sector + (cluster - 2) * sectors_per_cluster;
+}
 
 pub const DirectoryEntry = extern union {
     normal: Normal,
@@ -149,12 +186,15 @@ pub const DirectoryEntry = extern union {
                     // Remove padding from 8.3 file name + extension.
                     const name_length = std.mem.indexOfScalar(u8, &normal.name, ' ') orelse Normal.name_capacity;
                     @memcpy(file_name.ptr, normal.name[0..name_length]);
-                    (file_name.*)[name_length] = '.';
 
                     const extension_length = mem.indexOfScalar(u8, &normal.extension, ' ') orelse Normal.extension_capacity;
-                    @memcpy(file_name.ptr + name_length + 1, normal.extension[0..extension_length]);
-
-                    file_name.len = name_length + 1 + extension_length;
+                    if (extension_length > 0) {
+                        file_name.len += name_length + extension_length;
+                        (file_name.*)[name_length] = '.';
+                        @memcpy(file_name.ptr + name_length + 1, normal.extension[0..extension_length]);
+                    } else {
+                        file_name.len = name_length;
+                    }
                 }
                 return normal;
             }

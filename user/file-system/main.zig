@@ -1,5 +1,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
+const math = std.math;
+const mem = std.mem;
 const libt = @import("libt");
 const file_system = libt.service.file_system;
 const Request = file_system.Request;
@@ -49,23 +51,6 @@ const MasterBootRecord = extern struct {
     }
 };
 
-const VolumeBootRecord = extern struct {
-    jump: [3]u8,
-    oem_identifier: [8]u8,
-    bytes_per_sector: u16 align(1),
-    sectors_per_cluster: u8,
-    reserved_sectors: u16 align(1),
-    file_allocation_tables: u8,
-    root_directory_entries: u16 align(1),
-    total_sectors: u16 align(1),
-    media_descriptor_type: u8,
-    sectors_per_fat: u16 align(1),
-    sectors_per_track: u16 align(1),
-    heads: u16 align(1),
-    hidden_sectors: u32 align(1),
-    large_sector_count: u32 align(1),
-};
-
 var clients: [1]Client = .{.{ .channel = services.client }};
 
 pub fn main(args: []usize) !void {
@@ -78,7 +63,7 @@ pub fn main(args: []usize) !void {
 
     const mbr_entry = cache.getSector(0);
     const mbr: *const MasterBootRecord = @ptrCast(&mbr_entry.data);
-    if (!std.mem.eql(u8, &mbr.boot_signature, &MasterBootRecord.boot_signature)) {
+    if (!mem.eql(u8, &mbr.boot_signature, &MasterBootRecord.boot_signature)) {
         try writer.writeAll("Invalid MBR boot signature.\n");
         return error.InvalidBootSignature;
     }
@@ -90,17 +75,12 @@ pub fn main(args: []usize) !void {
         try writer.writeAll("Could not find valid partition.\n");
         return error.NoValidPartition;
     };
-    const partition_sector = partition.lba_first;
 
-    const vbr_entry = cache.getSector(partition_sector);
-    const vbr: *const VolumeBootRecord = @ptrCast(&vbr_entry.data);
-    fat.sectors_per_cluster = vbr.sectors_per_cluster;
-    fat.fat_sector = partition_sector + vbr.reserved_sectors;
-    clients[0].root_directory_sector = fat.fat_sector + vbr.file_allocation_tables * vbr.sectors_per_fat;
-    clients[0].working_directory_sector = clients[0].root_directory_sector;
-
+    const root_directory_sector = fat.init(partition.lba_first);
     cache.returnSector(mbr_entry);
-    cache.returnSector(vbr_entry);
+
+    clients[0].root_directory_sector = root_directory_sector;
+    clients[0].working_directory_sector = root_directory_sector;
 
     worker();
 }
@@ -111,6 +91,7 @@ fn worker() void {
         const request = client.channel.request.read();
         const payload: Response.Payload = switch (request.op) {
             .read => .{ .read = read(client, request.payload.read) },
+            .change_working_directory => .{ .change_working_directory = changeWorkingDirectory(client, request.payload.change_working_directory) },
         };
         client.channel.response.write(.{
             .token = request.token,
@@ -132,6 +113,7 @@ fn read(client: *Client, request: Request.Read) Response.Read {
         const directory_entry: *file_system.DirectoryEntry = &directory_entries[n];
 
         @memcpy(directory_entry.name[0..file_name_slice.len], file_name_slice);
+        directory_entry.name_length = @intCast(file_name_slice.len);
         directory_entry.flags.directory = fat_directory_entry.attributes.directory;
 
         directory_entry.creation_time.year = @as(u16, 1980) + fat_directory_entry.creation_date.year;
@@ -161,4 +143,41 @@ fn read(client: *Client, request: Request.Read) Response.Read {
     }
 
     return n;
+}
+
+fn changeWorkingDirectory(client: *Client, request: Request.ChangeWorkingDirectory) Response.ChangeWorkingDirectory {
+    if (request.path_offset + request.path_length > file_system.buffer_capacity)
+        return -1;
+    if (request.path_length == 0) {
+        client.working_directory_sector = client.root_directory_sector;
+        return 0;
+    }
+
+    const path = client.channel.buffer[request.path_offset..][0..request.path_length];
+    const path_is_absolute = path[0] == '/';
+    var path_it = mem.tokenizeScalar(u8, path, '/');
+
+    var start_sector = if (path_is_absolute) client.root_directory_sector else client.working_directory_sector;
+    var dir_it = fat.DirectoryEntry.Iterator.init(start_sector);
+
+    var file_name_buf: [file_system.DirectoryEntry.name_capacity]u8 = undefined;
+    var file_name_slice: []u8 = &file_name_buf;
+
+    while (path_it.next()) |path_part| {
+        while (dir_it.next(&file_name_slice)) |directory_entry| : (file_name_slice = &file_name_buf) {
+            if (mem.eql(u8, file_name_slice, path_part)) {
+                if (!directory_entry.attributes.directory)
+                    return -3;
+                start_sector = if (directory_entry.cluster_number_low == 0)
+                    client.root_directory_sector
+                else
+                    fat.sectorFromCluster(directory_entry.cluster_number_low);
+                dir_it = fat.DirectoryEntry.Iterator.init(start_sector);
+                break;
+            }
+        } else return -2;
+    }
+
+    client.working_directory_sector = start_sector;
+    return 0;
 }
