@@ -14,6 +14,7 @@ pub fn build(b: *std.Build) void {
     }, &[_]libt.ServiceOptions{
         .{ .name = "serial", .service = service.serial_driver },
         .{ .name = "block", .service = service.block_driver },
+        .{ .name = "file_system", .service = service.file_system },
     });
 
     b.installArtifact(exe);

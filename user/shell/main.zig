@@ -18,6 +18,7 @@ pub fn main(args: []usize) !void {
     const writer = serial.tx.writer();
     const reader = serial.rx.reader();
     const block = services.block;
+    const file_system = services.file_system;
 
     const command_max_length = 512;
     var command: [command_max_length]u8 = undefined;
@@ -51,6 +52,10 @@ pub fn main(args: []usize) !void {
             try read(&it, writer, block);
         } else if (mem.eql(u8, verb, "write")) {
             try write(&it, writer, block);
+        } else if (mem.eql(u8, verb, "cd")) {
+            try cd(&it, writer, file_system);
+        } else if (mem.eql(u8, verb, "ls")) {
+            try ls(&it, writer, file_system);
         } else if (mem.eql(u8, verb, "exit")) {
             break;
         } else {
@@ -129,6 +134,76 @@ fn write(
 
     if (!response.success)
         try writer.writeAll("Write failed\n");
+}
+
+fn cd(
+    it: *mem.SplitIterator(u8, .scalar),
+    writer: anytype,
+    file_system: *libt.service.file_system.consume.Type,
+) !void {
+    const path = it.next() orelse "";
+    const buffer: [*]u8 = @ptrCast(&file_system.buffer);
+    @memcpy(buffer, path);
+
+    file_system.request.write(.{
+        .token = 0,
+        .op = .change_working_directory,
+        .payload = .{ .change_working_directory = .{
+            .path_offset = 0,
+            .path_length = path.len,
+        } },
+    });
+    const response = file_system.response.read();
+    assert(response.token == 0);
+
+    switch (response.payload.change_working_directory) {
+        -1 => try writer.writeAll("Path overflow\n"),
+        -2 => try writer.writeAll("Invalid path\n"),
+        -3 => try writer.writeAll("Not a directory\n"),
+        else => {},
+    }
+}
+
+fn ls(
+    it: *mem.SplitIterator(u8, .scalar),
+    writer: anytype,
+    file_system: *libt.service.file_system.consume.Type,
+) !void {
+    _ = it;
+
+    file_system.request.write(.{
+        .token = 0,
+        .op = .read,
+        .payload = .{ .read = .{
+            .buffer_offset = 0,
+            .n = 10,
+        } },
+    });
+    const response = file_system.response.read();
+    assert(response.token == 0);
+
+    const n = response.payload.read;
+    const DirectoryEntry = libt.service.file_system.DirectoryEntry;
+    var entries: []DirectoryEntry = undefined;
+    entries.ptr = @ptrCast(&file_system.buffer);
+    entries.len = n;
+
+    for (entries) |entry| {
+        if (entry.flags.directory) {
+            try writer.writeAll(" <DIR>");
+        } else {
+            try writer.print(" {d: >5}", .{entry.size});
+        }
+        try writer.print(" {d:0>4}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2} {s}\n", .{
+            entry.modification_time.year,
+            entry.modification_time.month,
+            entry.modification_time.day,
+            entry.modification_time.hours,
+            entry.modification_time.minutes,
+            entry.modification_time.seconds,
+            entry.name[0..entry.name_length],
+        });
+    }
 }
 
 fn hexdump(bytes: []const u8, writer: anytype) !void {
