@@ -14,7 +14,7 @@ var entries: [entry_count]Entry = undefined;
 var entries_physical_base: usize = undefined;
 
 pub const Entry = struct {
-    sector: usize,
+    sector_index: usize,
     data: [sector_size]u8,
     state: enum {
         clean,
@@ -40,7 +40,7 @@ pub const Entry = struct {
     }
 
     pub fn removeFromHashChain(self: *Entry) void {
-        const bucket = &hash_buckets[self.sector & hash_mask];
+        const bucket = &hash_buckets[self.sector_index & hash_mask];
         var prev_entry: ?*Entry = null;
         var entry = bucket.*;
         while (entry) |e| {
@@ -85,7 +85,7 @@ pub fn init() void {
 
     var prev: ?*Entry = null;
     for (&entries) |*entry| {
-        entry.sector = 0;
+        entry.sector_index = 0;
         entry.state = .clean;
         entry.ref_count = 0;
         entry.hash_chain_next = null;
@@ -103,11 +103,11 @@ pub fn init() void {
     entries_physical_base = @intFromPtr(libt.syscall.processTranslate(.self, &entries) catch unreachable);
 }
 
-pub fn getSector(sector: usize) *Entry {
-    const bucket = &hash_buckets[sector & hash_mask];
+pub fn getSector(sector_index: usize) *Entry {
+    const bucket = &hash_buckets[sector_index & hash_mask];
     var entry = bucket.*;
     while (entry) |e| : (entry = e.hash_chain_next) {
-        if (e.sector == sector) {
+        if (e.sector_index == sector_index) {
             e.removeFromLruList();
             return e;
         }

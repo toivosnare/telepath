@@ -49,16 +49,16 @@ const Request = extern struct {
         out = 1,
     },
     reserved: u32 = 0,
-    sector: u64,
+    sector_index: u64,
     token: u8,
     status: u8,
 
-    pub fn send(sector: usize, address: usize, write: bool, token: u8, regs: *volatile virtio.MmioRegisters) !void {
+    pub fn send(sector_index: usize, address: usize, write: bool, token: u8, regs: *volatile virtio.MmioRegisters) !void {
         const idx = try allocateDescriptors();
 
         const request = &requests[idx[0]];
         request.type = if (write) .out else .in;
-        request.sector = sector;
+        request.sector_index = sector_index;
         request.token = token;
         request.status = 22;
 
@@ -196,7 +196,7 @@ pub fn main(args: []usize) !usize {
         request_channel.mutex.lock();
         while (request_channel.length > 0) {
             const request = &request_channel.buffer[request_channel.read_index];
-            Request.send(request.sector, request.address, request.write, request.token, regs) catch {
+            Request.send(request.sector_index, request.address, request.write, request.token, regs) catch {
                 response_channel.write(.{
                     .success = false,
                     .token = request.token,

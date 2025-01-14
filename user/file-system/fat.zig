@@ -210,7 +210,7 @@ pub const DirectoryEntry = extern union {
 
             if (self.sector_index < sectors_per_cluster) {
                 const old_entry = self.cache_entry;
-                self.cache_entry = cache.getSector(old_entry.sector + 1);
+                self.cache_entry = cache.getSector(old_entry.sector_index + 1);
                 cache.returnSector(old_entry);
                 return;
             }

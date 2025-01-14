@@ -2,7 +2,7 @@ const libt = @import("../libt.zig");
 const Channel = libt.service.Channel;
 
 pub const Request = extern struct {
-    sector: usize,
+    sector_index: usize,
     address: usize,
     write: bool,
     token: u8,

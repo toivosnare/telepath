@@ -69,11 +69,11 @@ fn read(
     writer: anytype,
     block: *libt.service.block_driver.consume.Type,
 ) !void {
-    const sector_number_string = it.next() orelse {
+    const sector_index_string = it.next() orelse {
         try writer.writeAll("Expected sector number\n");
         return;
     };
-    const sector_number = fmt.parseInt(usize, sector_number_string, 0) catch {
+    const sector_index = fmt.parseInt(usize, sector_index_string, 0) catch {
         try writer.writeAll("Invalid sector number\n");
         return;
     };
@@ -81,7 +81,7 @@ fn read(
     var sector: [512]u8 = undefined;
     const address = @intFromPtr(syscall.processTranslate(.self, &sector) catch unreachable);
     block.request.write(.{
-        .sector = sector_number,
+        .sector_index = sector_index,
         .address = address,
         .write = false,
         .token = 0,
@@ -101,11 +101,11 @@ fn write(
     writer: anytype,
     block: *libt.service.block_driver.consume.Type,
 ) !void {
-    const sector_number_string = it.next() orelse {
+    const sector_index_string = it.next() orelse {
         try writer.writeAll("Expected sector number\n");
         return;
     };
-    const sector_number = fmt.parseInt(usize, sector_number_string, 0) catch {
+    const sector_index = fmt.parseInt(usize, sector_index_string, 0) catch {
         try writer.writeAll("Invalid sector number\n");
         return;
     };
@@ -124,7 +124,7 @@ fn write(
     }
 
     block.request.write(.{
-        .sector = sector_number,
+        .sector_index = sector_index,
         .address = @intFromPtr(syscall.processTranslate(.self, &sector) catch unreachable),
         .write = true,
         .token = 0,
