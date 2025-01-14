@@ -157,8 +157,8 @@ pub fn main(args: []usize) usize {
 
     const physical_address = 0x10000000;
     const interrupt_source = 0x0a;
-    const region = syscall.allocate(1, .{ .readable = true, .writable = true }, @ptrFromInt(physical_address)) catch unreachable;
-    const ns16550a: *volatile Ns16550A = @ptrCast(syscall.map(region, null) catch unreachable);
+    const region = syscall.regionAllocate(.self, 1, .{ .read = true, .write = true }, @ptrFromInt(physical_address)) catch unreachable;
+    const ns16550a: *volatile Ns16550A = @ptrCast(syscall.regionMap(.self, region, null) catch unreachable);
     ns16550a.init();
 
     const client = @import("services").client;
@@ -170,7 +170,7 @@ pub fn main(args: []usize) usize {
     const interrupt_index = 1;
     var wait_reasons: [2]syscall.WaitReason = .{
         .{ .tag = .futex, .payload = .{ .futex = .{ .address = &tx_channel.empty.state, .expected_value = undefined } } },
-        .{ .tag = .interrupt, .payload = .{ .interrupt = .{ .source = interrupt_source } } },
+        .{ .tag = .interrupt, .payload = .{ .interrupt = interrupt_source } },
     };
     outer: while (true) {
         tx_channel.mutex.lock();
@@ -190,16 +190,16 @@ pub fn main(args: []usize) usize {
         while (true) {
             const index = syscall.wait(&wait_reasons, math.maxInt(usize)) catch unreachable;
             if (index == tx_channel_index) {
-                _ = syscall.unpackResult(syscall.WaitError, wait_reasons[tx_channel_index].result) catch |err| switch (err) {
+                syscall.unpackResult(syscall.WaitError!void, wait_reasons[tx_channel_index].result) catch |err| switch (err) {
                     error.WouldBlock => {},
                     else => @panic("wait errror"),
                 };
                 continue :outer;
             } else {
                 assert(index == interrupt_index);
-                assert(syscall.unpackResult(syscall.WaitError, wait_reasons[interrupt_index].result) catch 1 == 0);
+                assert(syscall.unpackResult(syscall.WaitError!usize, wait_reasons[interrupt_index].result) catch 1 == 0);
 
-                syscall.acknowledge(interrupt_source) catch unreachable;
+                syscall.ack(interrupt_source) catch unreachable;
 
                 rx_channel.mutex.lock();
                 while (ns16550a.getc()) |c| {

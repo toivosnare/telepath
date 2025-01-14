@@ -12,15 +12,15 @@
         .@"smp-test" = .{
             .path = "../smp-test",
         },
-        .@"virtio-blk" = .{
-            .path = "../virtio-blk",
-        },
-        .@"file-system" = .{
-            .path = "../file-system",
-        },
-        .shell = .{
-            .path = "../shell",
-        },
+        // .@"virtio-blk" = .{
+        //     .path = "../virtio-blk",
+        // },
+        // .@"file-system" = .{
+        //     .path = "../file-system",
+        // },
+        // .shell = .{
+        //     .path = "../shell",
+        // },
     },
     .paths = .{
         "build.zig",
