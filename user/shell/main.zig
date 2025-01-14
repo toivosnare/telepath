@@ -79,7 +79,7 @@ fn read(
     };
 
     var sector: [512]u8 = undefined;
-    const address = @intFromPtr(syscall.translate(&sector) catch unreachable);
+    const address = @intFromPtr(syscall.processTranslate(.self, &sector) catch unreachable);
     block.request.write(.{
         .sector = sector_number,
         .address = address,
@@ -125,7 +125,7 @@ fn write(
 
     block.request.write(.{
         .sector = sector_number,
-        .address = @intFromPtr(syscall.translate(&sector) catch unreachable),
+        .address = @intFromPtr(syscall.processTranslate(.self, &sector) catch unreachable),
         .write = true,
         .token = 0,
     });

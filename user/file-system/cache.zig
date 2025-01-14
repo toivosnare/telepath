@@ -100,7 +100,7 @@ pub fn init() void {
     prev.?.lru_list_next = null;
     lru_list_tail = prev;
 
-    entries_physical_base = @intFromPtr(libt.syscall.translate(&entries) catch unreachable);
+    entries_physical_base = @intFromPtr(libt.syscall.processTranslate(.self, &entries) catch unreachable);
 }
 
 pub fn getSector(sector: usize) *Entry {

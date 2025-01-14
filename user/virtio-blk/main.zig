@@ -109,9 +109,8 @@ pub fn main(args: []usize) !usize {
 
     const physical_address = 0x10008000;
     const region_size = math.divCeil(usize, @sizeOf(virtio.MmioRegisters) + @sizeOf(Config), mem.page_size) catch unreachable;
-    const region = syscall.allocate(region_size, .{ .readable = true, .writable = true }, @ptrFromInt(physical_address)) catch unreachable;
-
-    const regs: *volatile virtio.MmioRegisters = @ptrCast(syscall.map(region, null) catch unreachable);
+    const region = syscall.regionAllocate(.self, region_size, .{ .read = true, .write = true }, @ptrFromInt(physical_address)) catch unreachable;
+    const regs: *volatile virtio.MmioRegisters = @ptrCast(syscall.regionMap(.self, region, null) catch unreachable);
 
     if (regs.magic_value != virtio.MmioRegisters.magic) {
         try writer.writeAll("Invalid magic value.\n");
@@ -159,7 +158,7 @@ pub fn main(args: []usize) !usize {
     }
     regs.queue_num = Queue.length;
 
-    const physical_base = @intFromPtr(syscall.translate(&queue) catch unreachable);
+    const physical_base = @intFromPtr(syscall.processTranslate(.self, &queue) catch unreachable);
 
     const descriptors = physical_base + @offsetOf(Queue, "descriptors");
     regs.queue_desc_low = @intCast(descriptors & 0xFFFFFFFF);
@@ -179,7 +178,7 @@ pub fn main(args: []usize) !usize {
 
     queue.init();
 
-    requests_physical_address = @intFromPtr(syscall.translate(&requests) catch unreachable);
+    requests_physical_address = @intFromPtr(syscall.processTranslate(.self, &requests) catch unreachable);
 
     const client = services.client;
     const request_channel = &client.request;
@@ -189,7 +188,7 @@ pub fn main(args: []usize) !usize {
 
     var wait_reasons: [2]syscall.WaitReason = .{
         .{ .tag = .futex, .payload = .{ .futex = .{ .address = &request_channel.empty.state, .expected_value = undefined } } },
-        .{ .tag = .interrupt, .payload = .{ .interrupt = .{ .source = interrupt_source } } },
+        .{ .tag = .interrupt, .payload = .{ .interrupt = interrupt_source } },
     };
     var used_idx: u16 = 0;
 
@@ -215,17 +214,17 @@ pub fn main(args: []usize) !usize {
         while (true) {
             const index = syscall.wait(&wait_reasons, math.maxInt(usize)) catch unreachable;
             if (index == request_channel_index) {
-                _ = syscall.unpackResult(syscall.WaitError, wait_reasons[request_channel_index].result) catch |err| switch (err) {
+                syscall.unpackResult(syscall.WaitError!void, wait_reasons[request_channel_index].result) catch |err| switch (err) {
                     error.WouldBlock => {},
                     else => @panic("wait errror"),
                 };
                 continue :outer;
             } else {
                 assert(index == interrupt_index);
-                assert(syscall.unpackResult(syscall.WaitError, wait_reasons[interrupt_index].result) catch 1 == 0);
+                assert(syscall.unpackResult(syscall.WaitError!usize, wait_reasons[interrupt_index].result) catch 1 == 0);
 
                 regs.interrupt_acknowledge = @bitCast(regs.interrupt_status);
-                syscall.acknowledge(interrupt_source) catch unreachable;
+                syscall.ack(interrupt_source) catch unreachable;
 
                 while (used_idx != queue.used.index) : (used_idx += 1) {
                     const chain_index: Queue.Index = @intCast(queue.used.ring[used_idx % Queue.length].id);
