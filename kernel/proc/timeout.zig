@@ -3,66 +3,66 @@ const assert = std.debug.assert;
 const log = std.log.scoped(.@"proc.timeout");
 const math = std.math;
 const mem = std.mem;
-const proc = @import("../proc.zig");
-const Process = proc.Process;
-const riscv = @import("../riscv.zig");
 const libt = @import("libt");
 const Spinlock = libt.sync.Spinlock;
+const riscv = @import("../riscv.zig");
+const proc = @import("../proc.zig");
+const Thread = proc.Thread;
 
 var lock: Spinlock = .{};
-var head: ?*Process = null;
+var head: ?*Thread = null;
 
-pub fn wait(process: *Process, timeout_us: u64) void {
-    assert(process.wait_timeout_next == null);
+pub fn wait(thread: *Thread, timeout_us: u64) void {
+    assert(thread.wait_timeout_next == null);
     if (timeout_us == math.maxInt(u64))
         return;
 
-    log.debug("Adding Process id={d} to the timeout queue with timeout of {d} us", .{ process.id, timeout_us });
+    log.debug("Adding Thread id={d} to the timeout queue with timeout of {d} us", .{ thread.id, timeout_us });
 
     // FIXME: Can overflow?
-    process.wait_timeout_time = riscv.time.read() + proc.ticks_per_us * timeout_us;
+    thread.wait_timeout_time = riscv.time.read() + proc.ticks_per_us * timeout_us;
 
     lock.lock();
     defer lock.unlock();
 
-    var prev: ?*Process = null;
-    var next: ?*Process = head;
+    var prev: ?*Thread = null;
+    var next: ?*Thread = head;
     while (next) |n| {
-        if (n.wait_timeout_time > process.wait_timeout_time)
+        if (n.wait_timeout_time > thread.wait_timeout_time)
             break;
         prev = next;
         next = n.wait_timeout_next;
     }
 
-    process.wait_timeout_next = next;
+    thread.wait_timeout_next = next;
     if (prev) |p| {
-        p.wait_timeout_next = process;
+        p.wait_timeout_next = thread;
     } else {
-        head = process;
+        head = thread;
     }
 }
 
-pub fn remove(process: *Process) void {
-    log.debug("Removing Process id={d} from the timeout queue", .{process.id});
+pub fn remove(thread: *Thread) void {
+    log.debug("Removing Thread id={d} from the timeout queue", .{thread.id});
 
     lock.lock();
     defer lock.unlock();
 
-    var prev: ?*Process = null;
-    var current: ?*Process = head;
-    while (current) |c| {
-        if (c == process) {
+    var prev: ?*Thread = null;
+    var curr: ?*Thread = head;
+    while (curr) |c| {
+        if (c == thread) {
             if (prev) |p| {
-                p.wait_timeout_next = process.wait_timeout_next;
+                p.wait_timeout_next = thread.wait_timeout_next;
             } else {
-                head = process.wait_timeout_next;
+                head = thread.wait_timeout_next;
             }
-            process.wait_timeout_next = null;
-            process.wait_timeout_time = 0;
+            thread.wait_timeout_next = null;
+            thread.wait_timeout_time = 0;
             break;
         }
-        prev = current;
-        current = c.wait_timeout_next;
+        prev = curr;
+        curr = c.wait_timeout_next;
     }
 }
 
@@ -84,11 +84,11 @@ pub fn check(time: u64) void {
                 lock.unlock();
                 break;
             }
-            log.debug("Process id={d} timed out", .{h.id});
+            log.debug("Thread id={d} timed out", .{h.id});
             head = h.wait_timeout_next;
             h.wait_timeout_next = null;
             h.wait_timeout_time = 0;
-            h.waitReasonsClear();
+            h.waitRemove();
             h.context.a0 = libt.syscall.packResult(error.Timeout);
             proc.scheduler.enqueue(h);
             h.lock.unlock();

@@ -1,32 +1,27 @@
 const std = @import("std");
-const mm = @import("mm.zig");
-const proc = @import("proc.zig");
-const trap = @import("trap.zig");
-const fdt = @import("fdt.zig");
-const riscv = @import("riscv.zig");
-const libt = @import("libt");
-const sbi = @import("sbi");
 const atomic = std.atomic;
 const log = std.log.scoped(.main);
 const math = std.math;
 const assert = std.debug.assert;
 const mem = std.mem;
-const Region = mm.Region;
-const PhysicalAddress = mm.PhysicalAddress;
-const UserVirtualAddress = mm.UserVirtualAddress;
-const KernelVirtualAddress = mm.KernelVirtualAddress;
-const Page = mm.Page;
-const ConstPagePtr = mm.ConstPagePtr;
-const PageSlice = mm.PageSlice;
-const ConstPageSlice = mm.ConstPageSlice;
-const ConstPageFramePtr = mm.ConstPageFramePtr;
-const PageFrameSlice = mm.PageFrameSlice;
-const ConstPageFrameSlice = mm.ConstPageSlice;
-const PhysicalPageNumber = mm.PhysicalPageNumber;
-const Process = proc.Process;
-const Hart = proc.Hart;
+const sbi = @import("sbi");
+const libt = @import("libt");
 const tix = libt.tix;
 const Spinlock = libt.sync.Spinlock;
+const riscv = @import("riscv.zig");
+const fdt = @import("fdt.zig");
+const trap = @import("trap.zig");
+const mm = @import("mm.zig");
+const PhysicalAddress = mm.PhysicalAddress;
+const UserVirtualAddress = mm.UserVirtualAddress;
+const Page = mm.Page;
+const PageSlice = mm.PageSlice;
+const ConstPageFramePtr = mm.ConstPageFramePtr;
+const PageFrameSlice = mm.PageFrameSlice;
+const PhysicalPageNumber = mm.PhysicalPageNumber;
+const proc = @import("proc.zig");
+const Hart = proc.Hart;
+const Capability = proc.Capability;
 
 pub const std_options: std.Options = .{
     .log_level = .info,
@@ -141,7 +136,7 @@ export fn bootHartMain(boot_hart_id: Hart.Id, fdt_physical_start: PhysicalAddres
     var fdt_allocations: PageSlice = undefined;
     mm.init(heap_physical_slice, tix_physical_slice, fdt_physical_slice, &tix_allocations, &fdt_allocations);
 
-    const init_process = proc.init();
+    const init_process = proc.init() catch @panic("OOM");
     const trampoline_page: ConstPageFramePtr = @ptrCast(&trampoline);
     init_process.page_table.map(trampoline_page, trampoline_page, .{ .valid = true, .readable = true, .executable = true }) catch @panic("OOM");
     init_process.page_table.mapRange(logical_slice, heap_physical_slice, .{ .valid = true, .readable = true, .writable = true, .global = true }) catch @panic("OOM");
@@ -154,7 +149,7 @@ export fn bootHartMain(boot_hart_id: Hart.Id, fdt_physical_start: PhysicalAddres
     const tix_header: *tix.Header = @ptrFromInt(pr.initrd_physical_start);
     if (!mem.eql(u8, &tix_header.magic, &tix.Header.MAGIC))
         @panic("invalid TIX magic");
-    init_process.context.pc = tix_header.entry_point;
+    const entry_point = tix_header.entry_point;
 
     var region_headers: []tix.RegionHeader = undefined;
     region_headers.ptr = @ptrFromInt(pr.initrd_physical_start + @sizeOf(tix.Header));
@@ -162,16 +157,18 @@ export fn bootHartMain(boot_hart_id: Hart.Id, fdt_physical_start: PhysicalAddres
 
     for (region_headers) |rh| {
         const region_size_in_pages = math.divCeil(usize, rh.memory_size, @sizeOf(Page)) catch unreachable;
-        const region_entry = init_process.allocateRegion(region_size_in_pages, .{
-            .readable = rh.readable,
-            .writable = rh.writable,
-            .executable = rh.executable,
+        const region_handle = init_process.allocateRegion(region_size_in_pages, .{
+            .read = rh.readable,
+            .write = rh.writable,
+            .execute = rh.executable,
         }, 0) catch @panic("allocateRegion");
         const aligned_load_address = mem.alignBackward(UserVirtualAddress, rh.load_address, @sizeOf(Page));
-        _ = init_process.mapRegionEntry(region_entry, aligned_load_address) catch @panic("mapRegionEntry");
+        _ = init_process.mapRegion(region_handle, aligned_load_address) catch @panic("mapRegion");
 
+        const region_capability = Capability.get(region_handle, init_process) catch unreachable;
+        const region = region_capability.object.region;
         const page_offset = rh.load_address % @sizeOf(Page);
-        const dest = mem.asBytes(region_entry.region.?.allocation).ptr + page_offset;
+        const dest = mem.asBytes(region.allocation).ptr + page_offset;
 
         var source: []const u8 = undefined;
         source.ptr = @ptrFromInt(pr.initrd_physical_start + rh.offset);
@@ -191,12 +188,13 @@ export fn bootHartMain(boot_hart_id: Hart.Id, fdt_physical_start: PhysicalAddres
     }
 
     // Allocate and map region for the FDT for init process.
-    // The FDT is copied to make sure it is aligned to a page boundary (also everything was easier to impelemt this way).
-    const fdt_region_entry = init_process.allocateRegion(fdt_physical_slice.len, .{ .readable = true }, 0) catch @panic("OOM");
-    const fdt_address = init_process.mapRegionEntry(fdt_region_entry, 0) catch @panic("mapRegionEntry");
-    init_process.context.a0 = fdt_address;
+    // The FDT is copied to make sure it is aligned to a page boundary (also everything was easier to implement this way).
+    const fdt_region_handle = init_process.allocateRegion(fdt_physical_slice.len, .{ .read = true }, 0) catch @panic("OOM");
+    const fdt_address = init_process.mapRegion(fdt_region_handle, 0) catch @panic("mapRegion");
+    const fdt_region_capability = Capability.get(fdt_region_handle, init_process) catch unreachable;
+    const fdt_region = fdt_region_capability.object.region;
 
-    const dest: [*]u8 = @ptrCast(fdt_region_entry.region.?.allocation.ptr);
+    const dest: [*]u8 = @ptrCast(fdt_region.allocation.ptr);
     var source: []u8 = undefined;
     source.ptr = @ptrFromInt(fdt_physical_start);
     source.len = pr.fdt_size;
@@ -211,6 +209,8 @@ export fn bootHartMain(boot_hart_id: Hart.Id, fdt_physical_start: PhysicalAddres
         start = end;
         end += mm.page_allocator.max_order_pages;
     }
+
+    _ = init_process.allocateThread(.self, entry_point, 0, fdt_address, 0) catch @panic("OOM");
 
     const satp: riscv.satp.Type = .{
         .ppn = @bitCast(PhysicalPageNumber.fromPageTable(init_process.page_table)),
@@ -228,7 +228,7 @@ extern fn secondaryHartEntry(hart_id: Hart.Id, hart_index: Hart.Index) callconv(
 
 export fn secondaryHartMain(hart_index: Hart.Index) noreturn {
     trap.init();
-    const init_process = &proc.table[0];
+    const init_process = &proc.process_table[0].process;
     const satp: riscv.satp.Type = .{
         .ppn = @bitCast(PhysicalPageNumber.fromPageTable(init_process.page_table)),
         .asid = 0,
@@ -253,7 +253,7 @@ export fn main(hart_index: Hart.Index) noreturn {
         while (harts_ready.load(.monotonic) < proc.harts.len - 1) {}
 
         const trampoline_page: ConstPageFramePtr = @ptrCast(&trampoline);
-        const init_process = &proc.table[0];
+        const init_process = &proc.process_table[0].process;
         init_process.page_table.unmap(trampoline_page);
 
         log.info("All harts ready", .{});

@@ -1,3 +1,3 @@
 const std = @import("std");
 
-pub const KERNEL_STACK_SIZE_PER_HART = 8 * std.mem.page_size;
+pub const kernel_stack_size_per_hart = 8 * std.mem.page_size;

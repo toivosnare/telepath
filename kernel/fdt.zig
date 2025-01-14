@@ -1,8 +1,8 @@
 const std = @import("std");
 const mem = std.mem;
 const dtb = @import("dtb");
-const mm = @import("mm.zig");
 const proc = @import("proc.zig");
+const mm = @import("mm.zig");
 const PhysicalAddress = mm.PhysicalAddress;
 
 const ParseResult = struct {

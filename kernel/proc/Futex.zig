@@ -2,14 +2,13 @@ const std = @import("std");
 const mem = std.mem;
 const log = std.log.scoped(.@"proc.Futex");
 const Wyhash = std.hash.Wyhash;
-const mm = @import("../mm.zig");
-const PhysicalAddress = mm.PhysicalAddress;
-const UserVirtualAddress = mm.UserVirtualAddress;
-const proc = @import("../proc.zig");
-const Process = proc.Process;
-const WaitReason = Process.WaitReason;
 const libt = @import("libt");
 const Spinlock = libt.sync.Spinlock;
+const mm = @import("../mm.zig");
+const PhysicalAddress = mm.PhysicalAddress;
+const proc = @import("../proc.zig");
+const Thread = proc.Thread;
+const WaitReason = Thread.WaitReason;
 const Futex = @This();
 
 address: PhysicalAddress,
@@ -47,24 +46,7 @@ pub fn init() void {
     free_list_head = prev;
 }
 
-pub fn wait(process: *Process, virtual_address: UserVirtualAddress, expected_value: u32) !void {
-    if (virtual_address >= mm.user_virtual_end) {
-        log.warn("Process id={d} tried to wait on address=0x{x} which is outside user address space", .{ process.id, virtual_address });
-        return error.InvalidParameter;
-    }
-    if (!mem.isAligned(virtual_address, @alignOf(u32))) {
-        log.warn("Process id={d} tried to wait on address=0x{x} which not aligned to 4 bytes", .{ process.id, virtual_address });
-        return error.InvalidParameter;
-    }
-    if (virtual_address == 0) {
-        log.warn("Process id={d} tried to wait on address=0x0", .{process.id});
-        return error.InvalidParameter;
-    }
-    const physical_address = process.page_table.translate(virtual_address) catch {
-        log.warn("Process id={d} tried to wait on address=0x{x} which is not mapped", .{ process.id, virtual_address });
-        return error.InvalidParameter;
-    };
-
+pub fn wait(wait_reason: *WaitReason, physical_address: PhysicalAddress) !void {
     const bucket = bucketOf(physical_address);
     defer bucket.lock.unlock();
 
@@ -79,17 +61,6 @@ pub fn wait(process: *Process, virtual_address: UserVirtualAddress, expected_val
 
     errdefer futex.freeIfEmpty(bucket, prev);
 
-    const ptr = @as(*u32, @ptrFromInt(virtual_address));
-    const actual_value = ptr.*;
-    if (actual_value != expected_value) {
-        log.debug("Process id={d} expected {*} to be {d} whereas the actual value is {d}", .{ process.id, ptr, expected_value, actual_value });
-        return error.WouldBlock;
-    }
-
-    const wait_reason = try process.waitReasonAllocate();
-    wait_reason.payload = .{ .futex = .{ .address = physical_address, .next = null } };
-    log.debug("Process id={d} waiting on Futex address=0x{x}", .{ process.id, physical_address });
-
     if (futex.tail) |tail| {
         tail.payload.futex.next = wait_reason;
     } else {
@@ -98,36 +69,11 @@ pub fn wait(process: *Process, virtual_address: UserVirtualAddress, expected_val
     futex.tail = wait_reason;
 }
 
-pub fn wake(process: *Process, virtual_address: UserVirtualAddress, count: usize) !usize {
-    if (virtual_address >= mm.user_virtual_end) {
-        log.warn("Process id={d} tried to wake on address=0x{x} which is outside user address space", .{ process.id, virtual_address });
-        return error.InvalidParameter;
-    }
-    if (!mem.isAligned(virtual_address, @alignOf(u32))) {
-        log.warn("Process id={d} tried to wake on address=0x{x} which not aligned to 4 bytes", .{ process.id, virtual_address });
-        return error.InvalidParameter;
-    }
-    if (virtual_address == 0) {
-        log.warn("Process id={d} tried to wake on address=0x0", .{process.id});
-        return error.InvalidParameter;
-    }
-    if (count == 0) {
-        log.warn("Process id={d} tried to wake 0 waiters", .{process.id});
-        return error.InvalidParameter;
-    }
-    const physical_address = process.page_table.translate(virtual_address) catch {
-        log.warn("Process id={d} tried to wake on address=0x{x} which is not mapped", .{ process.id, virtual_address });
-        return error.InvalidParameter;
-    };
-
-    log.debug("Process id={d} is waking {d} waiters waiting on Futex address=0x{x}", .{ process.id, count, physical_address });
-
-    // FIXME: Maybe unlock process while popping waiters from the queue?
+pub fn wake(physical_address: PhysicalAddress, count: usize) usize {
     const bucket = bucketOf(physical_address);
     defer bucket.lock.unlock();
 
     var result: usize = 0;
-
     outer: while (true) {
         var prev: ?*Futex = null;
         var curr: ?*Futex = bucket.head;
@@ -144,8 +90,8 @@ pub fn wake(process: *Process, virtual_address: UserVirtualAddress, count: usize
                 return result;
             };
 
-            const p = proc.processFromWaitReason(wait_reason);
-            if (!p.lock.tryLock()) {
+            const owner = proc.threadFromWaitReason(wait_reason);
+            if (!owner.lock.tryLock()) {
                 bucket.lock.unlock();
                 // Add some delay.
                 for (0..10) |i|
@@ -153,13 +99,13 @@ pub fn wake(process: *Process, virtual_address: UserVirtualAddress, count: usize
                 bucket.lock.lock();
                 continue :outer;
             }
-            defer p.lock.unlock();
+            defer owner.lock.unlock();
 
-            log.debug("Popped Process id={d} from Futex address=0x{x}", .{ p.id, physical_address });
+            log.debug("Popped Thread id={d} from Futex address=0x{x}", .{ owner.id, physical_address });
             futex.head = wait_reason.payload.futex.next;
 
-            p.waitComplete(wait_reason, 0);
-            proc.scheduler.enqueue(p);
+            owner.waitComplete(wait_reason, 0);
+            proc.scheduler.enqueue(owner);
 
             result += 1;
             if (wait_reason == futex.tail) {
@@ -173,8 +119,8 @@ pub fn wake(process: *Process, virtual_address: UserVirtualAddress, count: usize
     }
 }
 
-pub fn remove(process: *Process, physical_address: PhysicalAddress) void {
-    log.debug("Process id={d} removing itself from the Futex address=0x{x}", .{ process.id, physical_address });
+pub fn remove(thread: *Thread, physical_address: PhysicalAddress) void {
+    log.debug("Thread id={d} removing itself from the Futex address=0x{x}", .{ thread.id, physical_address });
     const bucket = bucketOf(physical_address);
     defer bucket.lock.unlock();
 
@@ -189,25 +135,22 @@ pub fn remove(process: *Process, physical_address: PhysicalAddress) void {
 
     var prev_wait_reason: ?*WaitReason = null;
     var curr_wait_reason: ?*WaitReason = futex.head;
-    while (curr_wait_reason) |curr| {
-        if (proc.processFromWaitReason(curr) == process) {
-            if (prev_wait_reason) |prev| {
-                prev.payload.futex.next = curr.payload.futex.next;
-            } else {
-                futex.head = curr.payload.futex.next;
-            }
-            if (curr == futex.tail)
-                futex.tail = null;
-            futex.freeIfEmpty(bucket, prev_futex);
-            curr.completed = false;
-            curr.result = 0;
-            curr.payload = .{ .none = {} };
-            break;
+    const wait_reason = while (curr_wait_reason) |curr| {
+        if (proc.threadFromWaitReason(curr) == thread) {
+            break curr;
         }
-
         prev_wait_reason = curr;
         curr_wait_reason = curr.payload.futex.next;
+    } else return;
+
+    if (prev_wait_reason) |prev| {
+        prev.payload.futex.next = wait_reason.payload.futex.next;
+    } else {
+        futex.head = wait_reason.payload.futex.next;
     }
+    if (wait_reason == futex.tail)
+        futex.tail = null;
+    futex.freeIfEmpty(bucket, prev_futex);
 }
 
 fn bucketOf(address: PhysicalAddress) *Bucket {

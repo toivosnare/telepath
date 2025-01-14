@@ -13,7 +13,7 @@ pub fn build(b: *std.Build) void {
     const entry_header = b.addConfigHeader(.{
         .include_path = "entry.h",
     }, .{
-        .KERNEL_STACK_SIZE_PER_HART = entry.KERNEL_STACK_SIZE_PER_HART,
+        .KERNEL_STACK_SIZE_PER_HART = entry.kernel_stack_size_per_hart,
     });
 
     const kernel = b.addExecutable(.{

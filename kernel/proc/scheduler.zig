@@ -2,81 +2,82 @@ const std = @import("std");
 const assert = std.debug.assert;
 const log = std.log.scoped(.@"proc.scheduler");
 const mem = std.mem;
-const proc = @import("../proc.zig");
-const Process = proc.Process;
-const Hart = proc.Hart;
-const mm = @import("../mm.zig");
-const PhysicalPageNumber = mm.PhysicalPageNumber;
-const entry = @import("../entry.zig");
-const riscv = @import("../riscv.zig");
 const sbi = @import("sbi");
 const libt = @import("libt");
 const Spinlock = libt.sync.Spinlock;
+const entry = @import("../entry.zig");
+const riscv = @import("../riscv.zig");
+const mm = @import("../mm.zig");
+const PhysicalPageNumber = mm.PhysicalPageNumber;
+const proc = @import("../proc.zig");
+const Hart = proc.Hart;
+const Thread = proc.Thread;
 
 const quantum_us: usize = 50_000;
+// const quantum_us: usize = 1_000_000;
 
 var lock: Spinlock = .{};
-var head: ?*Process = null;
-var tail: ?*Process = null;
+var head: ?*Thread = null;
+var tail: ?*Thread = null;
 
-pub fn schedule(current_process: ?*Process, next_process: *Process, hart_index: Hart.Index) noreturn {
-    log.debug("Scheduling Process id={d} on hart index={d}", .{ next_process.id, hart_index });
-    switchContext(current_process, next_process, hart_index);
-    if (current_process == null)
+pub fn schedule(current_thread: ?*Thread, next_thread: *Thread, hart_index: Hart.Index) noreturn {
+    log.debug("Scheduling Thread id={d} on hart index={d}", .{ next_thread.id, hart_index });
+    switchContext(current_thread, next_thread, hart_index);
+    if (current_thread == null)
         riscv.sstatus.clear(.spp);
     sbi.time.setTimer(riscv.time.read() + proc.ticks_per_us * quantum_us);
-    returnToUserspace(&next_process.context);
+    returnToUserspace(&next_thread.context);
 }
 
-pub fn scheduleNext(current_process: ?*Process, hart_index: Hart.Index) noreturn {
+pub fn scheduleNext(current_thread: ?*Thread, hart_index: Hart.Index) noreturn {
     log.debug("Scheduling on hart index={d}", .{hart_index});
-    const next_process = if (pop()) |next| blk: {
-        switchContext(current_process, next, hart_index);
+    const next_thread = if (pop()) |next| blk: {
+        switchContext(current_thread, next, hart_index);
         break :blk next;
-    } else if (current_process != null) blk: {
-        log.debug("No processes in the ready queue. Continuing with Process id={d} on hart index={d}", .{ current_process.?.id, hart_index });
-        break :blk current_process.?;
+    } else if (current_thread != null) blk: {
+        log.debug("No threads in the ready queue. Continuing with Thread id={d} on hart index={d}", .{ current_thread.?.id, hart_index });
+        break :blk current_thread.?;
     } else {
-        log.debug("No processes in the ready queue. Entering idle on hart index={d}", .{hart_index});
+        log.debug("No threads in the ready queue. Entering idle on hart index={d}", .{hart_index});
         sbi.time.setTimer(riscv.time.read() + proc.ticks_per_us * quantum_us);
-        idle(@intFromPtr(&mm.kernel_stack) + (hart_index + 1) * entry.KERNEL_STACK_SIZE_PER_HART, hart_index);
+        idle(@intFromPtr(&mm.kernel_stack) + (hart_index + 1) * entry.kernel_stack_size_per_hart, hart_index);
     };
 
-    if (current_process == null)
+    if (current_thread == null)
         riscv.sstatus.clear(.spp);
     sbi.time.setTimer(riscv.time.read() + proc.ticks_per_us * quantum_us);
-    returnToUserspace(&next_process.context);
+    returnToUserspace(&next_thread.context);
 }
 
-pub fn scheduleCurrent(current_process: *Process) noreturn {
-    current_process.lock.unlock();
-    log.debug("Continuing with Process id={d} on hart index={d}", .{ current_process.id, current_process.context.hart_index });
-    returnToUserspace(&current_process.context);
+pub fn scheduleCurrent(current_thread: *Thread) noreturn {
+    current_thread.lock.unlock();
+    log.debug("Continuing with Thread id={d} on hart index={d}", .{ current_thread.id, current_thread.context.hart_index });
+    returnToUserspace(&current_thread.context);
 }
 
 // next_process.lock must be held but not current_process.lock?
-fn switchContext(current_process: ?*Process, next_process: *Process, hart_index: Hart.Index) void {
-    assert(current_process != next_process);
-    log.debug("Switching context to Process id={d} on hart index={d}", .{ next_process.id, hart_index });
-    next_process.state = .running;
-    next_process.context.hart_index = hart_index;
+fn switchContext(current_thread: ?*Thread, next_thread: *Thread, hart_index: Hart.Index) void {
+    assert(current_thread != next_thread);
+    log.debug("Switching context to Thread id={d} on hart index={d}", .{ next_thread.id, hart_index });
+    next_thread.state = .running;
+    next_thread.context.hart_index = hart_index;
 
     riscv.satp.write(.{
-        .ppn = @bitCast(PhysicalPageNumber.fromPageTable(next_process.page_table)),
+        .ppn = @bitCast(PhysicalPageNumber.fromPageTable(next_thread.process.page_table)),
         .asid = 0,
         .mode = .sv39,
     });
     riscv.@"sfence.vma"(null, null);
-    next_process.waitCopyResult();
+    next_thread.waitCopyResult();
 
-    next_process.lock.unlock();
+    next_thread.lock.unlock();
 
     // FIXME: we are not holding current.lock here?
-    if (current_process) |current|
+    if (current_thread) |current|
         enqueue(current);
 }
 
-fn pop() ?*Process {
+fn pop() ?*Thread {
     while (true) {
         lock.lock();
 
@@ -101,45 +102,50 @@ fn pop() ?*Process {
     }
 }
 
-extern fn returnToUserspace(context: *Process.Context) noreturn;
+extern fn returnToUserspace(context: *Thread.Context) noreturn;
 extern fn idle(stack_pointer: usize, hart_index: Hart.Index) noreturn;
 
-// Process lock must be held, i think?
-pub fn enqueue(process: *Process) void {
-    log.debug("Adding Process id={d} to the process queue", .{process.id});
+// Thread lock must be held, i think?
+pub fn enqueue(thread: *Thread) void {
+    log.debug("Adding Thread id={d} to the scheduling queue", .{thread.id});
     lock.lock();
     defer lock.unlock();
 
     if (tail) |t| {
-        t.scheduler_next = process;
+        t.scheduler_next = thread;
     } else {
-        head = process;
+        head = thread;
     }
-    tail = process;
-    process.scheduler_next = null;
+    tail = thread;
+    thread.scheduler_next = null;
 
-    process.state = .ready;
+    thread.state = .ready;
 }
 
-pub fn remove(process: *Process) void {
-    log.debug("Removing Process id={d} from the process queue", .{process.id});
+pub fn remove(thread: *Thread) void {
+    log.debug("Removing Thread id={d} from the process queue", .{thread.id});
     lock.lock();
     defer lock.unlock();
 
-    var prev: ?*Process = null;
-    var current: ?*Process = head;
+    var prev: ?*Thread = null;
+    var current: ?*Thread = head;
     while (current) |c| {
-        if (c == process) {
+        if (c == thread) {
             if (prev) |p| {
-                p.scheduler_next = process.scheduler_next;
+                p.scheduler_next = thread.scheduler_next;
             } else {
-                head = process.scheduler_next;
+                head = thread.scheduler_next;
             }
-            if (process == tail)
+            if (thread == tail)
                 tail = prev;
             break;
         }
         prev = current;
         current = c.scheduler_next;
     }
+}
+
+pub fn onAddressTranslationEnabled() void {
+    head = mm.kernelVirtualFromPhysical(head.?);
+    tail = mm.kernelVirtualFromPhysical(tail.?);
 }

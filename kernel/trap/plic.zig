@@ -1,7 +1,5 @@
 const std = @import("std");
 const assert = std.debug.assert;
-const math = std.math;
-const mem = std.mem;
 const proc = @import("../proc.zig");
 const Hart = proc.Hart;
 

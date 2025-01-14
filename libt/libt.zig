@@ -5,6 +5,10 @@ pub const syscall = @import("syscall.zig");
 pub const tix = @import("tix.zig");
 
 pub const address_space_end = 0x4000000000;
+pub const Handle = enum(u64) {
+    self = 0,
+    _,
+};
 
 comptime {
     if (@import("builtin").os.tag == .freestanding)
@@ -15,25 +19,25 @@ pub fn waitFutex(address: *atomic.Value(u32), expected_value: u32, timeout_us: u
     var reason: [1]syscall.WaitReason = .{.{ .tag = .futex, .payload = .{ .futex = .{ .address = address, .expected_value = expected_value } } }};
     const index = try syscall.wait(&reason, timeout_us);
     assert(index == 0);
-    _ = try syscall.unpackResult(syscall.WaitError, reason[0].result);
+    return syscall.unpackResult(syscall.WaitError!void, reason[0].result);
 }
 
-pub fn waitChildProcess(pid: usize, timeout_us: usize) syscall.WaitError!usize {
-    var reason: [1]syscall.WaitReason = .{.{ .tag = .child_process, .payload = .{ .child_process = .{ .pid = pid } } }};
+pub fn waitThread(thread_handle: Handle, timeout_us: usize) syscall.WaitError!usize {
+    var reason: [1]syscall.WaitReason = .{.{ .tag = .thread, .payload = .{ .thread = thread_handle } }};
     const index = try syscall.wait(&reason, timeout_us);
     assert(index == 0);
-    return syscall.unpackResult(syscall.WaitError, reason[0].result);
+    return syscall.unpackResult(syscall.WaitError!usize, reason[0].result);
 }
 
 pub fn waitInterrupt(source: u32, timeout_us: usize) syscall.WaitError!void {
-    var reason: [1]syscall.WaitReason = .{.{ .tag = .interrupt, .payload = .{ .interrupt = .{ .source = source } } }};
+    var reason: [1]syscall.WaitReason = .{.{ .tag = .interrupt, .payload = .{ .interrupt = source } }};
     const index = try syscall.wait(&reason, timeout_us);
     assert(index == 0);
-    _ = try syscall.unpackResult(syscall.WaitError, reason[0].result);
+    return syscall.unpackResult(syscall.WaitError!void, reason[0].result);
 }
 
-pub fn sleep(ns: usize) syscall.WaitError!void {
-    _ = syscall.wait(null, ns) catch |err| switch (err) {
+pub fn sleep(us: usize) syscall.WaitError!void {
+    _ = syscall.wait(null, us) catch |err| switch (err) {
         error.Timeout => return,
         else => return err,
     };

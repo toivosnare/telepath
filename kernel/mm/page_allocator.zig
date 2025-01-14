@@ -3,13 +3,12 @@ const assert = std.debug.assert;
 const fmt = std.fmt;
 const mem = std.mem;
 const log = std.log.scoped(.@"mm.page_allocator");
-const mm = @import("../mm.zig");
 const libt = @import("libt");
 const Spinlock = libt.sync.Spinlock;
+const mm = @import("../mm.zig");
 const Page = mm.Page;
 const PageSlice = mm.PageSlice;
 const PageFrameSlice = mm.PageFrameSlice;
-const ConstPageFrameSlice = mm.ConstPageFrameSlice;
 
 pub const max_order = 13;
 pub const max_order_pages = 1 << (max_order - 1);

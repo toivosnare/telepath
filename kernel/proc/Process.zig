@@ -2,234 +2,414 @@ const std = @import("std");
 const log = std.log.scoped(.@"proc.Process");
 const assert = std.debug.assert;
 const mem = std.mem;
-const mm = @import("../mm.zig");
-const proc = @import("../proc.zig");
-const riscv = @import("../riscv.zig");
 const libt = @import("libt");
+const Spinlock = libt.sync.Spinlock;
+const Handle = libt.Handle;
+const riscv = @import("../riscv.zig");
+const mm = @import("../mm.zig");
 const Region = mm.Region;
 const PhysicalAddress = mm.PhysicalAddress;
+const VirtualAddress = mm.VirtualAddress;
 const UserVirtualAddress = mm.UserVirtualAddress;
-const LogicalAddress = mm.LogicalAddress;
 const Page = mm.Page;
 const ConstPagePtr = mm.ConstPagePtr;
-const PageSlice = mm.PageSlice;
 const ConstPageFramePtr = mm.ConstPageFramePtr;
 const PageTable = mm.PageTable;
-const Futex = proc.Futex;
-const Spinlock = libt.sync.Spinlock;
+const proc = @import("../proc.zig");
+const Thread = proc.Thread;
+const Capability = proc.Capability;
 const Process = @This();
 
 lock: Spinlock,
 id: Id,
-parent: ?*Process,
-children: Children,
-state: State,
-region_entries: [max_regions]RegionEntry,
-region_entries_head: ?*RegionEntry,
+ref_count: u8,
 page_table: PageTable.Ptr,
-context: Context,
-wait_reason_count: usize,
-wait_reasons: [max_wait_reasons]WaitReason,
-wait_reasons_user: []libt.syscall.WaitReason,
-wait_timeout_next: ?*Process,
-wait_timeout_time: u64,
-scheduler_next: ?*Process,
-killed: bool,
-
-const max_children = 16;
-const max_regions = 64;
-const max_wait_reasons = 8;
+process_caps_head: ?*Capability,
+unmapped_region_caps_head: ?*Capability,
+mapped_region_caps_head: ?*Capability,
+thread_caps_head: ?*Capability,
 
 pub const Id = usize;
-pub const Children = std.BoundedArray(*Process, max_children);
-pub const State = enum {
-    invalid,
-    ready,
-    waiting,
-    running,
-};
-pub const RegionEntry = struct {
-    region: ?*Region,
-    start_address: ?UserVirtualAddress,
-    permissions: Permissions,
-    prev: ?*RegionEntry,
-    next: ?*RegionEntry,
-    const Index = usize;
-    const Permissions = struct {
-        readable: bool = false,
-        writable: bool = false,
-        executable: bool = false,
+
+pub fn ref(self: *Process) void {
+    self.ref_count += 1;
+}
+
+pub fn unref(self: *Process) void {
+    self.ref_count -= 1;
+    if (self.ref_count == 0)
+        proc.freeProcess(self);
+}
+
+pub fn allocateProcess(self: *Process) !Handle {
+    self.lock.lock();
+    defer self.lock.unlock();
+
+    const process = try proc.allocateProcess();
+    errdefer proc.freeProcess(process);
+
+    const capability = try Capability.allocate();
+    capability.owner = self;
+    capability.permissions = .{ .share = true };
+    capability.object = .{ .process = process };
+    capability.start_address = null;
+
+    // Prepend to process capability list.
+    capability.next = self.process_caps_head;
+    self.process_caps_head = capability;
+
+    return capability.toHandle();
+}
+
+pub fn freeProcess(self: *Process, target_process_handle: Handle) !void {
+    self.lock.lock();
+    defer self.lock.unlock();
+
+    const target_process_capability = try Capability.get(target_process_handle, self);
+    const target_process = try target_process_capability.process(self);
+
+    if (target_process == self)
+        return error.InvalidParameter;
+
+    // Remove from process capability list.
+    var prev: ?*Capability = null;
+    var curr: ?*Capability = self.process_caps_head;
+    while (curr) |c| {
+        if (c == target_process_capability) {
+            if (prev) |p| {
+                p.next = target_process_capability.next;
+            } else {
+                self.process_caps_head = target_process_capability.next;
+            }
+            break;
+        }
+
+        prev = c;
+        curr = c.next;
+    } else @panic("process capability not in list");
+
+    target_process_capability.free();
+}
+
+pub fn shareProcess(
+    self: *Process,
+    target_process_handle: Handle,
+    recipient_process: *Process,
+    permissions: libt.syscall.ProcessPermissions,
+) !Handle {
+    const target_process: *Process = blk: {
+        self.lock.lock();
+        defer self.lock.unlock();
+
+        if (recipient_process == self)
+            return error.InvalidParameter;
+
+        const target_process_capability = try Capability.get(target_process_handle, self);
+        if (permissions.share and !target_process_capability.permissions.share)
+            return error.NoPermission;
+
+        break :blk try target_process_capability.process(self);
     };
+    return recipient_process.receiveProcess(target_process, permissions);
+}
 
-    /// Check whether the region entry contains the given user virtual address
-    /// and if so return corresponding physical address or null otherwise.
-    pub fn contains(self: RegionEntry, address: UserVirtualAddress) ?PhysicalAddress {
-        if (self.start_address == null)
-            return null;
-        if (self.start_address.? > address)
-            return null;
-        assert(self.region != null);
-        const end_address = self.start_address.? + self.region.?.sizeInBytes();
-        if (end_address <= address)
-            return null;
+fn receiveProcess(
+    self: *Process,
+    target_process: *Process,
+    permissions: libt.syscall.ProcessPermissions,
+) !Handle {
+    self.lock.lock();
+    defer self.lock.unlock();
 
-        const offset_from_region_start = address - self.start_address.?;
-        return @intFromPtr(self.region.?.allocation.ptr) + offset_from_region_start;
-    }
-
-    pub fn virtualSlice(self: RegionEntry) ?PageSlice {
-        if (self.start_address == null)
-            return null;
-        if (self.region == null)
-            return null;
-
-        var result: PageSlice = undefined;
-        result.ptr = @ptrFromInt(self.start_address.?);
-        result.len = self.region.?.size;
-        return result;
-    }
-};
-pub const Context = extern struct {
-    pc: usize,
-    ra: usize,
-    sp: usize,
-    gp: usize,
-    tp: usize,
-    t0: usize,
-    t1: usize,
-    t2: usize,
-    s0: usize,
-    s1: usize,
-    a0: usize,
-    a1: usize,
-    a2: usize,
-    a3: usize,
-    a4: usize,
-    a5: usize,
-    a6: usize,
-    a7: usize,
-    s2: usize,
-    s3: usize,
-    s4: usize,
-    s5: usize,
-    s6: usize,
-    s7: usize,
-    s8: usize,
-    s9: usize,
-    s10: usize,
-    s11: usize,
-    t3: usize,
-    t4: usize,
-    t5: usize,
-    t6: usize,
-    hart_index: proc.Hart.Index,
-
-    pub fn process(self: *Context) *Process {
-        return @fieldParentPtr("context", self);
-    }
-};
-
-pub const WaitReason = struct {
-    completed: bool,
-    result: usize,
-    payload: union(Tag) {
-        pub const Tag = enum {
-            none,
-            futex,
-            child_process,
-            interrupt,
+    if (self.hasProcess(target_process)) |old_capability| {
+        const old_permissions = &old_capability.permissions;
+        old_permissions.* = .{
+            .share = old_permissions.share or permissions.share,
         };
-        none: void,
-        futex: struct {
-            address: PhysicalAddress,
-            next: ?*WaitReason,
-        },
-        child_process: Process.Id,
-        interrupt: struct {
-            source: u32,
-            next: ?*WaitReason,
-        },
-    },
-};
+
+        return old_capability.toHandle();
+    } else {
+        const new_capability = try Capability.allocate();
+        new_capability.owner = self;
+        new_capability.permissions = .{
+            .share = permissions.share,
+        };
+        new_capability.object = .{ .process = target_process };
+        new_capability.start_address = null;
+        target_process.ref();
+
+        // Prepend to process capability list.
+        new_capability.next = self.process_caps_head;
+        self.process_caps_head = new_capability;
+
+        return new_capability.toHandle();
+    }
+}
+
+fn hasProcess(self: *Process, other: *Process) ?*Capability {
+    var cap: ?*Capability = self.process_caps_head;
+    while (cap) |c| : (cap = c.next) {
+        if (c.object.process == other)
+            return c;
+    }
+    return null;
+}
+
+pub fn translate(self: *Process, virtual_address: UserVirtualAddress) !PhysicalAddress {
+    self.lock.lock();
+    defer self.lock.unlock();
+
+    var cap: ?*Capability = self.mapped_region_caps_head;
+    while (cap) |c| : (cap = c.next) {
+        // if (cap.start_address >= virtual_address)
+        //     break;
+        if (c.contains(virtual_address)) |physical_address| {
+            return physical_address;
+        } else |err| {
+            switch (err) {
+                error.No => continue,
+                error.InvalidType => @panic(""),
+            }
+        }
+    }
+    return error.NotMapped;
+}
 
 pub fn allocateRegion(
     self: *Process,
     size: usize,
-    permissions: RegionEntry.Permissions,
+    permissions: libt.syscall.RegionPermissions,
     physical_address: PhysicalAddress,
-) !*RegionEntry {
-    log.debug("Process id={d} is allocating Region size={d} permissions={} physical_address=0x{x}", .{ self.id, size, permissions, physical_address });
-    for (&self.region_entries) |*re| {
-        if (re.region == null) {
-            // TODO: add physical address permissions.
-            const region = try Region.allocate(size, physical_address);
-            re.* = .{
-                .region = region,
-                .start_address = null,
-                .permissions = permissions,
-                .prev = null,
-                .next = null,
-            };
-            return re;
-        }
-    }
-    log.warn("Process id={d} could not find free RegionEntry table slot", .{self.id});
-    return error.OutOfMemory;
-}
+) !Handle {
+    self.lock.lock();
+    defer self.lock.unlock();
 
-pub fn mapRegion(self: *Process, region: *Region, address: UserVirtualAddress) !UserVirtualAddress {
-    log.debug("Process id={d} is mapping Region index={d} address=0x{x}", .{ self.id, region.index(), address });
-    const region_entry = self.hasRegion(region) orelse {
-        log.warn("Process id={d} tried to map unowned Region index={d}", .{ self.id, region.index() });
-        return error.NoPermission;
+    const region = try Region.allocate(size, physical_address);
+    errdefer region.unref();
+
+    const capability = try Capability.allocate();
+    capability.owner = self;
+    capability.permissions = .{
+        .read = permissions.read,
+        .write = permissions.write,
+        .execute = permissions.execute,
     };
-    if (region_entry.start_address != null) {
-        log.warn("Process id={d} tried to map mapped Region index={d}", .{ self.id, region.index() });
-        return error.Exists;
-    }
-    return self.mapRegionEntry(region_entry, address);
+    capability.object = .{ .region = region };
+    capability.start_address = null;
+
+    // Prepend to unmapped region capability list.
+    capability.next = self.unmapped_region_caps_head;
+    self.unmapped_region_caps_head = capability;
+
+    return capability.toHandle();
 }
 
-pub fn mapRegionEntry(self: *Process, region_entry: *RegionEntry, address: UserVirtualAddress) !UserVirtualAddress {
-    log.debug("Process id={d} is mapping RegionEntry address=0x{x}", .{ self.id, address });
-    if (address == 0) {
-        return self.mapRegionEntryWherever(region_entry);
-    } else {
-        if (!mem.isAligned(address, @sizeOf(Page))) {
-            log.warn("Process id={d} tried to map RegionEntry at address 0x{x} which is not aligned to a page boundary", .{ self.id, address });
-            return error.InvalidParameter;
-        }
-        try self.mapRegionEntryAtAddress(region_entry, address);
-        return address;
-    }
-}
+pub fn freeRegion(self: *Process, target_region_handle: Handle) !void {
+    self.lock.lock();
+    defer self.lock.unlock();
 
-fn mapRegionEntryAtAddress(self: *Process, region_entry: *RegionEntry, address: UserVirtualAddress) !void {
-    // Find region entries that are mapped before (previous_entry) and after (next_entry) the new region.
-    var addr: UserVirtualAddress = 0;
-    var previous_entry: ?*RegionEntry = null;
-    var previous_size: usize = undefined;
-    var next_entry: ?*RegionEntry = self.region_entries_head;
-    while (next_entry) |ne| {
-        if (ne.start_address.? >= address)
+    const target_region_capability = try Capability.get(target_region_handle, self);
+    if (target_region_capability.object != .region)
+        return error.InvalidType;
+    if (target_region_capability.start_address != null)
+        return error.Mapped;
+
+    // Remove from unmapped region capability list.
+    var prev: ?*Capability = null;
+    var curr: ?*Capability = self.unmapped_region_caps_head;
+    while (curr) |c| {
+        if (c == target_region_capability) {
+            if (prev) |p| {
+                p.next = target_region_capability.next;
+            } else {
+                self.unmapped_region_caps_head = target_region_capability.next;
+            }
             break;
-        previous_size = ne.region.?.sizeInBytes();
-        addr = ne.start_address.? + previous_size;
-        previous_entry = ne;
-        next_entry = ne.next;
+        }
+
+        prev = c;
+        curr = c.next;
+    } else @panic("region capability not in list");
+
+    target_region_capability.free();
+}
+
+pub fn shareRegion(
+    self: *Process,
+    target_region_handle: Handle,
+    recipient_process: *Process,
+    permissions: libt.syscall.RegionPermissions,
+) !Handle {
+    const target_region: *Region = blk: {
+        self.lock.lock();
+        defer self.lock.unlock();
+
+        if (recipient_process == self)
+            return error.InvalidParameter;
+
+        const target_region_capability = try Capability.get(target_region_handle, self);
+        if (permissions.read and !target_region_capability.permissions.read)
+            return error.NoPermission;
+        if (permissions.write and !target_region_capability.permissions.write)
+            return error.NoPermission;
+        if (permissions.execute and !target_region_capability.permissions.execute)
+            return error.NoPermission;
+
+        break :blk try target_region_capability.region();
+    };
+    return recipient_process.receiveRegion(target_region, permissions);
+}
+
+fn receiveRegion(
+    self: *Process,
+    target_region: *Region,
+    permissions: libt.syscall.RegionPermissions,
+) !Handle {
+    self.lock.lock();
+    defer self.lock.unlock();
+
+    if (self.hasRegion(target_region)) |old_capability| {
+        const old_permissions = &old_capability.permissions;
+        old_permissions.* = .{
+            .read = old_permissions.read or permissions.read,
+            .write = old_permissions.write or permissions.write,
+            .execute = old_permissions.execute or permissions.execute,
+        };
+
+        return old_capability.toHandle();
+    } else {
+        const new_capability = try Capability.allocate();
+        new_capability.owner = self;
+        new_capability.permissions = .{
+            .read = permissions.read,
+            .write = permissions.write,
+            .execute = permissions.execute,
+        };
+        new_capability.object = .{ .region = target_region };
+        new_capability.start_address = null;
+        target_region.ref();
+
+        // Prepend to unmapped region capability list.
+        new_capability.next = self.unmapped_region_caps_head;
+        self.unmapped_region_caps_head = new_capability;
+
+        return new_capability.toHandle();
+    }
+}
+
+fn hasRegion(self: *Process, other: *Region) ?*Capability {
+    var cap: ?*Capability = self.unmapped_region_caps_head;
+    while (cap) |c| : (cap = c.next) {
+        if (c.object.region == other)
+            return c;
     }
 
-    // Check that the region mapping fits between the previous_entry and current_entry.
-    const region = region_entry.region.?;
+    cap = self.mapped_region_caps_head;
+    while (cap) |c| : (cap = c.next) {
+        if (c.object.region == other)
+            return c;
+    }
+
+    return null;
+}
+
+pub fn mapRegion(self: *Process, target_region_handle: Handle, virtual_address: UserVirtualAddress) !UserVirtualAddress {
+    self.lock.lock();
+    defer self.lock.unlock();
+
+    const target_region_capability = try Capability.get(target_region_handle, self);
+    if (target_region_capability.object != .region)
+        return error.InvalidType;
+    if (target_region_capability.start_address != null)
+        return error.Mapped;
+    if (!mem.isAligned(virtual_address, @sizeOf(Page)))
+        return error.InvalidParameter;
+
+    const next = target_region_capability.next;
+
+    const result = try if (virtual_address == 0)
+        self.mapRegionWherever(target_region_capability)
+    else
+        self.mapRegionAt(target_region_capability, virtual_address);
+
+    // Remove from unmapped regions caps list.
+    var prev: ?*Capability = null;
+    var curr: ?*Capability = self.unmapped_region_caps_head;
+    while (curr) |c| {
+        if (c == target_region_capability)
+            break;
+        prev = c;
+        curr = c.next;
+    } else @panic("");
+
+    if (prev) |p| {
+        p.next = next;
+    } else {
+        self.unmapped_region_caps_head = next;
+    }
+
+    return result;
+}
+
+/// Find the first large enough free space in the process address space that can hold the new region.
+fn mapRegionWherever(self: *Process, region_capability: *Capability) !UserVirtualAddress {
+    const region = region_capability.object.region;
+    const region_size = region.sizeInBytes();
+
+    // Skip the first page to avoid null pointer dereference problems.
+    var candidate_address: UserVirtualAddress = @sizeOf(Page);
+    var prev_cap: ?*Capability = null;
+    var next_cap: ?*Capability = self.mapped_region_caps_head;
+    while (next_cap) |nc| {
+        if (nc.start_address.? - candidate_address >= region_size)
+            break;
+        candidate_address = nc.start_address.? + nc.object.region.sizeInBytes();
+        prev_cap = nc;
+        next_cap = nc.next;
+    }
+    if (candidate_address + region_size > mm.user_virtual_end) {
+        log.warn("Process id={d} map failed because address space is reserved", .{self.id});
+        return error.Reserved;
+    }
+
+    // Update the mapped region capability list.
+    region_capability.next = next_cap;
+    if (prev_cap) |pc| {
+        pc.next = region_capability;
+    } else {
+        self.mapped_region_caps_head = region_capability;
+    }
+
+    region_capability.start_address = candidate_address;
+    return candidate_address;
+}
+
+fn mapRegionAt(self: *Process, region_capability: *Capability, address: UserVirtualAddress) !UserVirtualAddress {
+    // Find region capabilities that are mapped before (prev_cap) and after (next_cap) the new region.
+    var addr: UserVirtualAddress = 0;
+    var prev_cap: ?*Capability = null;
+    var prev_size: usize = undefined;
+    var next_cap: ?*Capability = self.mapped_region_caps_head;
+    while (next_cap) |nc| {
+        if (nc.start_address.? >= address)
+            break;
+        prev_size = nc.object.region.sizeInBytes();
+        addr = nc.start_address.? + prev_size;
+        prev_cap = nc;
+        next_cap = nc.next;
+    }
+
+    // Check that the region mapping fits between the prev_cap and next_cap.
+    const region = region_capability.object.region;
     const region_end = address + region.sizeInBytes();
-    if (previous_entry) |pe| {
-        if (pe.start_address.? + previous_size > address) {
+    if (prev_cap) |pc| {
+        if (pc.start_address.? + prev_size > address) {
             log.warn("Process id={d} map failed because address space is reserved", .{self.id});
             return error.Reserved;
         }
     }
-    if (next_entry) |ne| {
-        if (region_end > ne.start_address.?) {
+    if (next_cap) |nc| {
+        if (region_end > nc.start_address.?) {
             log.warn("Process id={d} map failed because address space is reserved", .{self.id});
             return error.Reserved;
         }
@@ -241,137 +421,234 @@ fn mapRegionEntryAtAddress(self: *Process, region_entry: *RegionEntry, address: 
         return error.Reserved;
     }
 
-    // Update the region entry linked list.
-    region_entry.start_address = address;
-    region_entry.prev = previous_entry;
-    if (previous_entry) |pe| {
-        pe.next = region_entry;
+    // Update the mapped region capabilities list.
+    if (prev_cap) |pc| {
+        pc.next = region_capability;
     } else {
-        self.region_entries_head = region_entry;
+        self.mapped_region_caps_head = region_capability;
     }
-    region_entry.next = next_entry;
-    if (next_entry) |ne| {
-        ne.prev = region_entry;
-    }
-}
+    region_capability.next = next_cap;
 
-fn mapRegionEntryWherever(self: *Process, region_entry: *RegionEntry) !UserVirtualAddress {
-    // Find the first large enough free space in the process address space that can hold the new region.
-    const region = region_entry.region.?;
-    const region_size = region.sizeInBytes();
-    // Skip the first page to avoid null pointer dereference problems.
-    var address: UserVirtualAddress = @sizeOf(Page);
-    var previous_entry: ?*RegionEntry = null;
-    var next_entry: ?*RegionEntry = self.region_entries_head;
-    while (next_entry) |ne| {
-        if (ne.start_address.? - address >= region_size)
-            break;
-        address = ne.start_address.? + ne.region.?.sizeInBytes();
-        previous_entry = ne;
-        next_entry = ne.next;
-    }
-    if (address + region_size > mm.user_virtual_end) {
-        log.warn("Process id={d} map failed because address space is reserved", .{self.id});
-        return error.Reserved;
-    }
-
-    // Update the region entry linked list.
-    region_entry.start_address = address;
-    region_entry.prev = previous_entry;
-    if (previous_entry) |pe| {
-        pe.next = region_entry;
-    } else {
-        self.region_entries_head = region_entry;
-    }
-    region_entry.next = next_entry;
-    if (next_entry) |ne| {
-        ne.prev = region_entry;
-    }
+    region_capability.start_address = address;
     return address;
 }
 
-pub fn receiveRegion(self: *Process, region: *Region, permissions: RegionEntry.Permissions) !*RegionEntry {
-    var free_entry: ?*RegionEntry = null;
-    for (&self.region_entries) |*re| {
-        if (re.region == null) {
-            free_entry = re;
-        } else if (re.region == region) {
-            re.permissions.readable = re.permissions.readable or permissions.readable;
-            re.permissions.writable = re.permissions.writable or permissions.writable;
-            re.permissions.executable = re.permissions.executable or permissions.executable;
-            log.debug("Process id={d} received region index={d} which it already had. New permissions are {}", .{ self.id, region.index(), re.permissions });
-            return re;
-        }
-    }
-    if (free_entry) |re| {
-        re.region = region;
-        re.start_address = null;
-        re.permissions = permissions;
-        re.prev = null;
-        re.next = null;
-        region.ref();
-        log.debug("Process id={d} received new region index={d} with permissions {}", .{ self.id, region.index(), permissions });
-        return re;
-    }
-    log.warn("Process id={d} is unable to receive Region index={d} because RegionEntry table is full", .{ self.id, region.index() });
-    return error.OutOfMemory;
-}
+pub fn unmapRegion(self: *Process, virtual_address: UserVirtualAddress) !Handle {
+    self.lock.lock();
+    defer self.lock.unlock();
 
-pub fn unmapRegionEntry(self: *Process, region_entry: *RegionEntry) !void {
-    assert(region_entry.region != null);
-    log.debug("Process id={d} is unmapping RegionEntry for Region index={d}", .{ self.id, region_entry.region.?.index() });
+    // log.debug("Process id={d} is unmapping RegionEntry for Region index={d}", .{ self.id, region_entry.region.?.index() });
+    var prev_cap: ?*Capability = null;
+    var curr_cap: ?*Capability = self.mapped_region_caps_head;
+    const region_capability: *Capability = while (curr_cap) |cc| {
+        if (cc.start_address.? == virtual_address)
+            break cc;
+        if (cc.start_address.? > virtual_address)
+            return error.InvalidParameter;
 
-    if (region_entry.start_address == null) {
-        log.warn("Process id={d} tried to unmap Region index={d} which is not mapped", .{ self.id, region_entry.region.?.index() });
-        return error.Exists;
-    }
+        prev_cap = cc;
+        curr_cap = cc.next;
+    } else return error.InvalidParameter;
 
-    if (region_entry.prev) |prev| {
-        prev.next = region_entry.next;
+    // Remove the region capability form the mapped region capabilities list.
+    if (prev_cap) |pc| {
+        pc.next = region_capability.next;
     } else {
-        self.region_entries_head = region_entry.next;
+        self.mapped_region_caps_head = region_capability.next;
     }
-    if (region_entry.next) |next|
-        next.prev = region_entry.prev;
-    region_entry.prev = null;
-    region_entry.next = null;
 
-    const virtual = region_entry.virtualSlice() orelse unreachable;
-    self.page_table.unmapRange(virtual);
-    region_entry.start_address = null;
+    // Prepend to unmapped region capability list.
+    region_capability.next = self.unmapped_region_caps_head;
+    self.unmapped_region_caps_head = region_capability;
+
+    const virtual_slice = region_capability.virtualSlice() catch unreachable;
+    self.page_table.unmapRange(virtual_slice);
+    region_capability.start_address = null;
     riscv.@"sfence.vma"(null, null);
+    return region_capability.toHandle();
 }
 
-pub fn freeRegionEntry(self: *Process, region_entry: *RegionEntry) !void {
-    if (region_entry.start_address != null) {
-        log.warn("Process id={d} tried to free RegionEntry which is mapped at address=0x{x}", .{ self.id, region_entry.start_address.? });
-        return error.Exists;
+pub fn writeRegion(self: *Process, target_region_handle: Handle, from: UserVirtualAddress, offset: usize, length: usize) !void {
+    self.lock.lock();
+    defer self.lock.unlock();
+
+    const target_region_capability = try Capability.get(target_region_handle, self);
+    const target_region = try target_region_capability.region();
+    try target_region.write(from, offset, length);
+}
+
+pub fn allocateThread(
+    self: *Process,
+    target_process_handle: Handle,
+    instruction_pointer: usize,
+    stack_pointer: usize,
+    a0: usize,
+    a1: usize,
+) !Handle {
+    self.lock.lock();
+    defer self.lock.unlock();
+
+    const target_process_capability = try Capability.get(target_process_handle, self);
+    const target_process = try target_process_capability.process(self);
+
+    const thread = try proc.allocateThread();
+    errdefer proc.freeThread(thread);
+
+    const capability = try Capability.allocate();
+    capability.owner = self;
+    capability.permissions = .{ .wait = true, .kill = true };
+    capability.object = .{ .thread = thread };
+    capability.start_address = null;
+
+    // Prepend to thread capability list.
+    capability.next = self.thread_caps_head;
+    self.thread_caps_head = capability;
+
+    thread.process = target_process;
+    target_process.ref();
+    thread.context.pc = instruction_pointer;
+    thread.context.sp = stack_pointer;
+    thread.context.a0 = a0;
+    thread.context.a1 = a1;
+    proc.scheduler.enqueue(thread);
+
+    return capability.toHandle();
+}
+
+pub fn freeThread(self: *Process, target_thread_handle: Handle) !void {
+    self.lock.lock();
+    defer self.lock.unlock();
+
+    const target_thread_capability = try Capability.get(target_thread_handle, self);
+    if (target_thread_capability.object != .thread)
+        return error.InvalidType;
+
+    // Remove from thread capability list.
+    var prev: ?*Capability = null;
+    var curr: ?*Capability = self.thread_caps_head;
+    while (curr) |c| {
+        if (c == target_thread_capability) {
+            if (prev) |p| {
+                p.next = target_thread_capability.next;
+            } else {
+                self.process_caps_head = target_thread_capability.next;
+            }
+            break;
+        }
+
+        prev = c;
+        curr = c.next;
+    } else @panic("thread capability not in list");
+
+    target_thread_capability.free();
+}
+
+pub fn shareThread(
+    self: *Process,
+    target_thread_handle: Handle,
+    recipient_process: *Process,
+    permissions: libt.syscall.ThreadPermissions,
+) !Handle {
+    const target_thread: *Thread = blk: {
+        self.lock.lock();
+        defer self.lock.unlock();
+
+        if (recipient_process == self)
+            return error.InvalidParameter;
+
+        const target_thread_capability = try Capability.get(target_thread_handle, self);
+        if (permissions.wait and !target_thread_capability.permissions.wait)
+            return error.NoPermission;
+        if (permissions.kill and !target_thread_capability.permissions.kill)
+            return error.NoPermission;
+
+        break :blk try target_thread_capability.thread();
+    };
+    return recipient_process.receiveThread(target_thread, permissions);
+}
+
+fn receiveThread(
+    self: *Process,
+    target_thread: *Thread,
+    permissions: libt.syscall.ThreadPermissions,
+) !Handle {
+    self.lock.lock();
+    defer self.lock.unlock();
+
+    if (self.hasThread(target_thread)) |old_capability| {
+        const old_permissions = &old_capability.permissions;
+        old_permissions.* = .{
+            .wait = old_permissions.wait or permissions.wait,
+            .kill = old_permissions.kill or permissions.kill,
+        };
+
+        return old_capability.toHandle();
+    } else {
+        const new_capability = try Capability.allocate();
+        new_capability.owner = self;
+        new_capability.permissions = .{
+            .wait = permissions.wait,
+            .kill = permissions.kill,
+        };
+        new_capability.object = .{ .thread = target_thread };
+        new_capability.start_address = null;
+        target_thread.ref();
+
+        // Prepend to thread capability list.
+        new_capability.next = self.thread_caps_head;
+        self.thread_caps_head = new_capability;
+
+        return new_capability.toHandle();
     }
-    assert(region_entry.region != null);
-    log.debug("Process id={d} is freeing RegionEntry for Region index={d}", .{ self.id, region_entry.region.?.index() });
-    region_entry.region.?.unref();
-    region_entry.region = null;
 }
 
-pub fn handlePageFault(self: *Process, faulting_address: UserVirtualAddress, kind: enum { load, store, execute }) noreturn {
+fn hasThread(self: *Process, thread: *Thread) ?*Capability {
+    var cap: ?*Capability = self.thread_caps_head;
+    while (cap) |c| : (cap = c.next) {
+        if (c.object.thread == thread)
+            return c;
+    }
+    return null;
+}
+
+pub fn killThread(self: *Process, target_thread_handle: Handle, exit_code: usize) !void {
+    const target_thread = blk: {
+        self.lock.lock();
+        defer self.lock.unlock();
+
+        const target_thread_capability = try Capability.get(target_thread_handle, self);
+        break :blk try target_thread_capability.thread();
+    };
+
+    // TODO: holding two thread locks here?
+    target_thread.lock.lock();
+    target_thread.die(exit_code);
+    target_thread.lock.unlock();
+}
+
+pub const PageFaultKind = enum { load, store, execute };
+pub fn handlePageFault(self: *Process, faulting_address: VirtualAddress, kind: PageFaultKind) bool {
+    self.lock.lock();
+    defer self.lock.unlock();
+
     if (faulting_address >= mm.user_virtual_end)
         @panic("non user virtual address faulting");
 
     log.debug("Process id={d} handling page fault for address 0x{x}", .{ self.id, faulting_address });
 
-    var entry: ?*RegionEntry = self.region_entries_head;
-    while (entry) |e| : (entry = e.next) {
-        assert(e.start_address != null);
-        if (e.contains(faulting_address)) |corresponding_address| {
-            if (kind == .load and !e.permissions.readable) {
+    var region_cap: ?*Capability = self.mapped_region_caps_head;
+    while (region_cap) |rc| : (region_cap = rc.next) {
+        assert(rc.start_address != null);
+        if (rc.contains(faulting_address)) |corresponding_address| {
+            if (kind == .load and !rc.permissions.read) {
                 log.warn("Process id={d} tried to read from address 0x{x} where it has no read permission", .{ self.id, faulting_address });
                 break;
             }
-            if (kind == .store and !e.permissions.writable) {
+            if (kind == .store and !rc.permissions.write) {
                 log.warn("Process id={d} tried to write to address 0x{x} where it has no write permission", .{ self.id, faulting_address });
                 break;
             }
-            if (kind == .execute and !e.permissions.executable) {
+            if (kind == .execute and !rc.permissions.execute) {
                 log.warn("Process id={d} tried to execute from address 0x{x} where it has no execute permission", .{ self.id, faulting_address });
                 break;
             }
@@ -380,187 +657,20 @@ pub fn handlePageFault(self: *Process, faulting_address: UserVirtualAddress, kin
             const physical: ConstPageFramePtr = @ptrFromInt(mem.alignBackward(PhysicalAddress, corresponding_address, @sizeOf(Page)));
             self.page_table.map(virtual, physical, .{
                 .valid = true,
-                .readable = e.permissions.readable,
-                .writable = e.permissions.writable,
-                .executable = e.permissions.executable,
+                .readable = rc.permissions.read,
+                .writable = rc.permissions.write,
+                .executable = rc.permissions.execute,
                 .user = true,
                 .global = false,
             }) catch @panic("OOM");
             riscv.@"sfence.vma"(faulting_address, null);
-            proc.scheduler.scheduleCurrent(self);
+            return true;
+        } else |err| switch (err) {
+            error.InvalidType => @panic(""),
+            error.No => continue,
         }
     } else {
         log.warn("Process id={d} tried to access unmapped address 0x{x}", .{ self.id, faulting_address });
     }
-    self.exit(libt.syscall.packResult(error.Crashed));
-    proc.scheduler.scheduleNext(null, self.context.hart_index);
-}
-
-pub fn waitChildProcess(self: *Process, child_pid: Process.Id) !void {
-    if (self.hasChildWithId(child_pid) == null) {
-        log.warn("Process id={d} tried to wait on Process id={d} which is not a child", .{ self.id, child_pid });
-        return error.NoPermission;
-    }
-
-    const wait_reason = try self.waitReasonAllocate();
-    wait_reason.payload = .{ .child_process = child_pid };
-    log.debug("Process id={d} is waiting on child Process id={d}", .{ self.id, child_pid });
-}
-
-pub fn waitReasonAllocate(self: *Process) !*WaitReason {
-    if (self.wait_reason_count == max_wait_reasons) {
-        log.warn("Process id={d} has no free wait reasons", .{self.id});
-        return error.OutOfMemory;
-    }
-
-    const wait_reason = &self.wait_reasons[self.wait_reason_count];
-    wait_reason.completed = false;
-    wait_reason.result = 0;
-    wait_reason.payload = .{ .none = {} };
-    self.wait_reason_count += 1;
-    return wait_reason;
-}
-
-pub fn waitComplete(self: *Process, wait_reason: *WaitReason, result: usize) void {
-    log.debug("Wait reason of Process id={d} is complete", .{self.id});
-    wait_reason.completed = true;
-    wait_reason.result = result;
-    wait_reason.payload = .{ .none = {} };
-    self.waitReasonsClear();
-    proc.timeout.remove(self);
-}
-
-pub fn waitReasonsClear(self: *Process) void {
-    log.debug("Process id={d} clearing wait reasons", .{self.id});
-    for (self.waitReasons()) |*wait_reason| {
-        if (wait_reason.payload == .futex and !wait_reason.completed) {
-            Futex.remove(self, wait_reason.payload.futex.address);
-        } else if (wait_reason.payload == .child_process) {
-            {}
-        } else if (wait_reason.payload == .interrupt and !wait_reason.completed) {
-            proc.interrupt.remove(self, wait_reason.payload.interrupt.source);
-        }
-    }
-}
-
-pub fn waitCopyResult(self: *Process) void {
-    if (self.wait_reason_count == 0)
-        return;
-    log.debug("Process id={d} copying wait result to user", .{self.id});
-
-    for (0.., self.waitReasons(), self.wait_reasons_user) |index, *kernel, *user| {
-        if (kernel.completed) {
-            user.result = kernel.result;
-            self.context.a0 = index;
-            break;
-        }
-    }
-    self.waitClear();
-}
-
-pub fn waitClear(self: *Process) void {
-    log.debug("Process id={d} clearing wait state", .{self.id});
-    self.wait_reason_count = 0;
-    for (&self.wait_reasons) |*wait_reason| {
-        wait_reason.completed = false;
-        wait_reason.result = 0;
-        wait_reason.payload = .{ .none = {} };
-    }
-    self.wait_reasons_user = undefined;
-    self.wait_timeout_next = null;
-    self.wait_timeout_time = 0;
-}
-
-fn waitReasons(self: *Process) []WaitReason {
-    return (&self.wait_reasons)[0..self.wait_reason_count];
-}
-
-pub fn exit(self: *Process, exit_code: usize) void {
-    log.debug("Process id={d} exiting", .{self.id});
-    const parent = self.parent orelse @panic("process with no parent exiting?");
-    self.lock.unlock();
-
-    parent.lock.lock();
-    defer parent.lock.unlock();
-
-    self.lock.lock();
-    defer self.lock.unlock();
-
-    if (self.killed) {
-        log.debug("Process id={d} already killed", .{self.id});
-        proc.free(self);
-        return;
-    }
-
-    for (parent.waitReasons()) |*wait_reason| {
-        if (!wait_reason.completed and wait_reason.payload == .child_process and wait_reason.payload.child_process == self.id) {
-            parent.waitComplete(wait_reason, exit_code);
-            proc.scheduler.enqueue(parent);
-        }
-    }
-    parent.kill(self);
-}
-
-pub fn kill(self: *Process, child: *Process) void {
-    log.debug("Process id={d} is killing child Process id={d}", .{ self.id, child.id });
-    const child_index = mem.indexOfScalar(*Process, self.children.constSlice(), child) orelse unreachable;
-    _ = self.children.swapRemove(child_index);
-    child.die();
-}
-
-fn die(self: *Process) void {
-    for (self.children.slice()) |child| {
-        child.lock.lock();
-        child.die();
-        child.lock.unlock();
-    }
-    log.debug("Process id={d} is dying in state {s}", .{ self.id, @tagName(self.state) });
-
-    if (self.state == .ready) {
-        proc.scheduler.remove(self);
-    } else if (self.state == .waiting) {
-        self.waitReasonsClear();
-        proc.timeout.remove(self);
-    } else if (self.state == .running) {
-        self.killed = true;
-        return;
-    } else {
-        assert(false);
-    }
-
-    proc.free(self);
-}
-
-pub fn translate(self: Process, virtual: UserVirtualAddress) !PhysicalAddress {
-    var entry: ?*RegionEntry = self.region_entries_head;
-    while (entry) |e| : (entry = e.next) {
-        assert(e.start_address != null);
-        if (e.contains(virtual)) |physical|
-            return physical;
-    }
-    return error.Exists;
-}
-
-pub fn hasRegion(self: *Process, region: *const Region) ?*RegionEntry {
-    for (&self.region_entries) |*region_entry| {
-        if (region_entry.region == region)
-            return region_entry;
-    }
-    return null;
-}
-
-pub fn hasRegionAtAddress(self: *Process, address: UserVirtualAddress) ?*RegionEntry {
-    for (&self.region_entries) |*region_entry| {
-        if (region_entry.start_address == address)
-            return region_entry;
-    }
-    return null;
-}
-
-pub fn hasChildWithId(self: Process, pid: Id) ?*Process {
-    for (self.children.slice()) |child| {
-        if (child.id == pid)
-            return child;
-    }
-    return null;
+    return false;
 }

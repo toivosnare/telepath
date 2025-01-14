@@ -3,8 +3,8 @@ const log = std.log.scoped(.mm);
 const mem = std.mem;
 const assert = std.debug.assert;
 const libt = @import("libt");
-const proc = @import("proc.zig");
 const entry = @import("entry.zig");
+const proc = @import("proc.zig");
 
 pub const Region = @import("mm/Region.zig");
 pub const page_allocator = @import("mm/page_allocator.zig");
@@ -170,8 +170,8 @@ pub const kernel_start: KernelVirtualAddress = 0xFFFFFFFFF0000000;
 pub var kernel_size: usize = undefined; // In pages.
 pub var kernel_offset: usize = 0;
 
-const KERNEL_STACK_SIZE_TOTAL = proc.MAX_HARTS * entry.KERNEL_STACK_SIZE_PER_HART;
-pub export var kernel_stack: [KERNEL_STACK_SIZE_TOTAL]u8 align(@sizeOf(Page)) linksection(".bss") = undefined;
+const kernel_stack_size_total = proc.max_harts * entry.kernel_stack_size_per_hart;
+pub export var kernel_stack: [kernel_stack_size_total]u8 align(@sizeOf(Page)) linksection(".bss") = undefined;
 
 pub fn init(
     heap: PageFrameSlice,

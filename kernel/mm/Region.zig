@@ -1,13 +1,15 @@
 const std = @import("std");
 const log = std.log.scoped(.@"mm.Region");
+const mem = std.mem;
 const math = std.math;
+const libt = @import("libt");
+const Spinlock = libt.sync.Spinlock;
 const mm = @import("../mm.zig");
+const UserVirtualAddress = mm.UserVirtualAddress;
 const PhysicalAddress = mm.PhysicalAddress;
 const Page = mm.Page;
 const PageFrameSlice = mm.PageFrameSlice;
 const PageSlice = mm.PageSlice;
-const libt = @import("libt");
-const Spinlock = libt.sync.Spinlock;
 const Region = @This();
 
 // Ref count of zero implies that the region is not in use.
