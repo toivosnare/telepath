@@ -118,6 +118,21 @@ pub fn regionUnmap(thread: *Thread) RegionUnmapError!usize {
     return usizeFromHandle(try owner_process.unmapRegion(virtual_address));
 }
 
+pub const RegionWriteError = syscall.RegionWriteError;
+pub fn regionWrite(thread: *Thread) RegionWriteError!usize {
+    log.debug("regionWrite", .{});
+    const owner_process_handle = handleFromUsize(thread.context.a1);
+    const target_region_handle = handleFromUsize(thread.context.a2);
+    const from = thread.context.a3;
+    const offset = thread.context.a4;
+    const length = thread.context.a5;
+    const calling_process = thread.process;
+
+    const owner_process = try getProcess(calling_process, owner_process_handle);
+    try owner_process.writeRegion(target_region_handle, from, offset, length);
+    return 0;
+}
+
 pub const ThreadAllocateError = syscall.ThreadAllocateError;
 pub fn threadAllocate(thread: *Thread) ThreadAllocateError!usize {
     log.debug("threadAllocate", .{});

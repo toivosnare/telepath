@@ -75,6 +75,11 @@ pub fn regionUnmap(owner_process: Handle, virtual_address: *align(page_size) any
     return unpackResult(RegionUnmapError!Handle, syscall2(.region_unmap, @intFromEnum(owner_process), @intFromPtr(virtual_address)));
 }
 
+pub const RegionWriteError = error{ InvalidParameter, NoPermission, InvalidType };
+pub fn regionWrite(owner_process: Handle, target_region: Handle, from: *const anyopaque, offset: usize, length: usize) RegionWriteError!void {
+    return unpackResult(RegionWriteError!void, syscall5(.region_write, @intFromEnum(owner_process), @intFromEnum(target_region), @intFromPtr(from), offset, length));
+}
+
 pub const ThreadAllocateError = error{ InvalidParameter, NoPermission, InvalidType, OutOfMemory };
 pub fn threadAllocate(owner_process: Handle, target_process: Handle, instruction_pointer: *const anyopaque, stack_pointer: *anyopaque, a0: usize, a1: usize) ThreadAllocateError!Handle {
     return unpackResult(ThreadAllocateError!Handle, syscall6(.thread_allocate, @intFromEnum(owner_process), @intFromEnum(target_process), @intFromPtr(instruction_pointer), @intFromPtr(stack_pointer), a0, a1));
