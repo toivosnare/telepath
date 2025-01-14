@@ -1,18 +1,29 @@
 const std = @import("std");
+const log = std.log;
 const assert = std.debug.assert;
+const ArrayList = std.ArrayList;
 const math = std.math;
 const mem = std.mem;
 const libt = @import("libt");
 const file_system = libt.service.file_system;
 const Request = file_system.Request;
 const Response = file_system.Response;
+const syscall = libt.syscall;
 const cache = @import("cache.zig");
 const fat = @import("fat.zig");
 const services = @import("services");
 
+pub const os = libt;
+pub const std_options: std.Options = .{
+    .log_level = .info,
+    .logFn = logFn,
+};
+
 comptime {
     _ = libt;
 }
+
+const writer = services.serial.tx.writer();
 
 const Client = struct {
     channel: *file_system.provide.Type,
@@ -51,18 +62,34 @@ const MasterBootRecord = extern struct {
     }
 };
 
-var clients: [1]Client = .{.{ .channel = services.client }};
+const sector_size = 512;
+
+fn readSector(sector_index: usize, buf: *[sector_size]u8) !void {
+    const physical_address = try syscall.processTranslate(.self, buf);
+    services.block.request.write(.{
+        .sector_index = sector_index,
+        .address = @intFromPtr(physical_address),
+        .write = false,
+        .token = 0,
+    });
+    const response = services.block.response.read();
+    if (!response.success)
+        return error.Failed;
+}
 
 pub fn main(args: []usize) !void {
     _ = args;
-
-    const writer = services.serial.tx.writer();
     try writer.writeAll("Initializing file system.\n");
 
-    cache.init();
+    var gpa = std.heap.GeneralPurposeAllocator(.{
+        .MutexType = libt.sync.Mutex,
+    }){};
+    const allocator = gpa.allocator();
 
-    const mbr_entry = cache.getSector(0);
-    const mbr: *const MasterBootRecord = @ptrCast(&mbr_entry.data);
+    const sector_buf = try allocator.alloc(u8, sector_size);
+
+    try readSector(0, @ptrCast(sector_buf.ptr));
+    const mbr: *const MasterBootRecord = @ptrCast(sector_buf.ptr);
     if (!mem.eql(u8, &mbr.boot_signature, &MasterBootRecord.boot_signature)) {
         try writer.writeAll("Invalid MBR boot signature.\n");
         return error.InvalidBootSignature;
@@ -76,18 +103,35 @@ pub fn main(args: []usize) !void {
         return error.NoValidPartition;
     };
 
-    const root_directory_sector = fat.init(partition.lba_first);
-    cache.returnSector(mbr_entry);
+    const vbr_sector = partition.lba_first;
+    try readSector(vbr_sector, @ptrCast(sector_buf.ptr));
+    const root_directory_sector = fat.init(vbr_sector, @ptrCast(sector_buf.ptr));
+    allocator.free(sector_buf);
 
-    clients[0].root_directory_sector = root_directory_sector;
-    clients[0].working_directory_sector = root_directory_sector;
+    var clients = ArrayList(Client).init(allocator);
+    try clients.append(.{
+        .channel = services.client,
+        .root_directory_sector = root_directory_sector,
+        .working_directory_sector = root_directory_sector,
+    });
 
-    worker();
+    // Allocate and map a stack for the worker thread.
+    const stack_pages = 16;
+    const stack_handle = try syscall.regionAllocate(.self, stack_pages, .{ .read = true, .write = true }, null);
+    const stack_start: [*]align(mem.page_size) u8 = @ptrCast(try syscall.regionMap(.self, stack_handle, null));
+    const stack_end = stack_start + stack_pages * mem.page_size;
+
+    const worker_handle = try syscall.threadAllocate(.self, .self, &worker, stack_end, @intFromPtr(&clients), 0);
+    _ = worker_handle;
+
+    cache.init();
+    cache.loop();
 }
 
-fn worker() void {
+fn worker(clients: *ArrayList(Client)) void {
+    log.info("worker running", .{});
     while (true) {
-        const client = &clients[0];
+        const client = &clients.items[0];
         const request = client.channel.request.read();
         const payload: Response.Payload = switch (request.op) {
             .read => .{ .read = read(client, request.payload.read) },
@@ -180,4 +224,15 @@ fn changeWorkingDirectory(client: *Client, request: Request.ChangeWorkingDirecto
 
     client.working_directory_sector = start_sector;
     return 0;
+}
+
+pub fn logFn(
+    comptime level: std.log.Level,
+    comptime scope: @TypeOf(.EnumLiteral),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    _ = scope;
+    const prefix = "[" ++ comptime level.asText() ++ "] ";
+    writer.print(prefix ++ format ++ "\n", args) catch return;
 }

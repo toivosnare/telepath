@@ -50,10 +50,10 @@ const Request = extern struct {
     },
     reserved: u32 = 0,
     sector_index: u64,
-    token: u8,
+    token: usize,
     status: u8,
 
-    pub fn send(sector_index: usize, address: usize, write: bool, token: u8, regs: *volatile virtio.MmioRegisters) !void {
+    pub fn send(sector_index: usize, address: usize, write: bool, token: usize, regs: *volatile virtio.MmioRegisters) !void {
         const idx = try allocateDescriptors();
 
         const request = &requests[idx[0]];

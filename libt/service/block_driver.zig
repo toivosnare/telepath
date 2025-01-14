@@ -5,12 +5,12 @@ pub const Request = extern struct {
     sector_index: usize,
     address: usize,
     write: bool,
-    token: u8,
+    token: usize,
 };
 
 pub const Response = extern struct {
     success: bool,
-    token: u8,
+    token: usize,
 };
 
 const capacity = 10;

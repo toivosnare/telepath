@@ -26,11 +26,7 @@ var sectors_per_cluster: u8 = undefined;
 var fat_sector: usize = undefined;
 var first_data_sector: usize = undefined;
 
-pub fn init(vbr_sector: usize) usize {
-    const vbr_entry = cache.getSector(vbr_sector);
-    defer cache.returnSector(vbr_entry);
-    const vbr: *const VolumeBootRecord = @ptrCast(&vbr_entry.data);
-
+pub fn init(vbr_sector: usize, vbr: *const VolumeBootRecord) usize {
     sectors_per_cluster = vbr.sectors_per_cluster;
     fat_sector = vbr_sector + vbr.reserved_sectors;
     const root_directory_sector = fat_sector + vbr.file_allocation_tables * vbr.sectors_per_fat;
