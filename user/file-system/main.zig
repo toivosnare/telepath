@@ -9,8 +9,10 @@ const file_system = libt.service.file_system;
 const Request = file_system.Request;
 const Response = file_system.Response;
 const syscall = libt.syscall;
+const WaitReason = syscall.WaitReason;
 const cache = @import("cache.zig");
 const fat = @import("fat.zig");
+const Client = @import("Client.zig");
 const services = @import("services");
 
 pub const os = libt;
@@ -24,12 +26,7 @@ comptime {
 }
 
 const writer = services.serial.tx.writer();
-
-const Client = struct {
-    channel: *file_system.provide.Type,
-    root_directory_sector: usize = undefined,
-    working_directory_sector: usize = undefined,
-};
+var clients: ArrayList(Client) = undefined;
 
 const MasterBootRecord = extern struct {
     bootstrap_code: [446]u8,
@@ -64,19 +61,6 @@ const MasterBootRecord = extern struct {
 
 const sector_size = 512;
 
-fn readSector(sector_index: usize, buf: *[sector_size]u8) !void {
-    const physical_address = try syscall.processTranslate(.self, buf);
-    services.block.request.write(.{
-        .sector_index = sector_index,
-        .address = @intFromPtr(physical_address),
-        .write = false,
-        .token = 0,
-    });
-    const response = services.block.response.read();
-    if (!response.success)
-        return error.Failed;
-}
-
 pub fn main(args: []usize) !void {
     _ = args;
     try writer.writeAll("Initializing file system.\n");
@@ -108,11 +92,11 @@ pub fn main(args: []usize) !void {
     const root_directory_sector = fat.init(vbr_sector, @ptrCast(sector_buf.ptr));
     allocator.free(sector_buf);
 
-    var clients = ArrayList(Client).init(allocator);
+    clients = ArrayList(Client).init(allocator);
     try clients.append(.{
         .channel = services.client,
-        .root_directory_sector = root_directory_sector,
-        .working_directory_sector = root_directory_sector,
+        .root_directory = .{ .sector_index = root_directory_sector },
+        .working_directory = .{ .sector_index = root_directory_sector },
     });
 
     // Allocate and map a stack for the worker thread.
@@ -121,18 +105,32 @@ pub fn main(args: []usize) !void {
     const stack_start: [*]align(mem.page_size) u8 = @ptrCast(try syscall.regionMap(.self, stack_handle, null));
     const stack_end = stack_start + stack_pages * mem.page_size;
 
-    const worker_handle = try syscall.threadAllocate(.self, .self, &worker, stack_end, @intFromPtr(&clients), 0);
+    const worker_handle = try syscall.threadAllocate(.self, .self, &worker, stack_end, 0, 0);
     _ = worker_handle;
 
     cache.init();
     cache.loop();
 }
 
-fn worker(clients: *ArrayList(Client)) void {
+fn readSector(sector_index: usize, buf: *[sector_size]u8) !void {
+    const physical_address = try syscall.processTranslate(.self, buf);
+    services.block.request.write(.{
+        .sector_index = sector_index,
+        .address = @intFromPtr(physical_address),
+        .write = false,
+        .token = 0,
+    });
+    const response = services.block.response.read();
+    if (!response.success)
+        return error.Failed;
+}
+
+fn worker() void {
     log.info("worker running", .{});
     while (true) {
-        const client = &clients.items[0];
-        const request = client.channel.request.read();
+        var request: Request = undefined;
+        var client: *Client = undefined;
+        getRequest(&request, &client);
         const payload: Response.Payload = switch (request.op) {
             .read => .{ .read = read(client, request.payload.read) },
             .change_working_directory => .{ .change_working_directory = changeWorkingDirectory(client, request.payload.change_working_directory) },
@@ -145,84 +143,64 @@ fn worker(clients: *ArrayList(Client)) void {
     }
 }
 
-fn read(client: *Client, request: Request.Read) Response.Read {
-    var file_name_buf: [file_system.DirectoryEntry.name_capacity]u8 = undefined;
-    var it = fat.DirectoryEntry.Iterator.init(client.working_directory_sector);
-    var directory_entries: [*]file_system.DirectoryEntry = @alignCast(@ptrCast(&client.channel.buffer[request.buffer_offset]));
-    var n: usize = 0;
+fn getRequest(request_out: *Request, client_out: **Client) void {
+    const wait_reasons = clients.allocator.alloc(WaitReason, clients.items.len) catch @panic("OOM");
+    defer clients.allocator.free(wait_reasons);
 
-    while (n < request.n) : (n += 1) {
-        var file_name_slice: []u8 = &file_name_buf;
-        const fat_directory_entry: *fat.DirectoryEntry.Normal = it.next(&file_name_slice) orelse break;
-        const directory_entry: *file_system.DirectoryEntry = &directory_entries[n];
+    while (true) {
+        for (wait_reasons, clients.items) |*wait_reason, *client| {
+            const request_channel = &client.channel.request;
+            request_channel.mutex.lock();
 
-        @memcpy(directory_entry.name[0..file_name_slice.len], file_name_slice);
-        directory_entry.name_length = @intCast(file_name_slice.len);
-        directory_entry.flags.directory = fat_directory_entry.attributes.directory;
+            if (!request_channel.isEmpty()) {
+                request_out.* = request_channel.readLockedAssumeCapacity();
+                client_out.* = client;
+                request_channel.full.notify(.one);
+                request_channel.mutex.unlock();
+                return;
+            }
 
-        directory_entry.creation_time.year = @as(u16, 1980) + fat_directory_entry.creation_date.year;
-        directory_entry.creation_time.month = fat_directory_entry.creation_date.month;
-        directory_entry.creation_time.day = fat_directory_entry.creation_date.day;
-        directory_entry.creation_time.hours = fat_directory_entry.creation_time.hour;
-        directory_entry.creation_time.minutes = fat_directory_entry.creation_time.minute;
-        directory_entry.creation_time.seconds = @as(u8, 2) * fat_directory_entry.creation_time.second;
-        if (fat_directory_entry.creation_time_cs >= 100)
-            directory_entry.creation_time.seconds += 1;
+            const old_state = request_channel.empty.state.load(.monotonic);
+            request_channel.mutex.unlock();
 
-        directory_entry.access_time.year = @as(u16, 1980) + fat_directory_entry.access_date.year;
-        directory_entry.access_time.month = fat_directory_entry.access_date.month;
-        directory_entry.access_time.day = fat_directory_entry.access_date.day;
-        directory_entry.access_time.hours = 0;
-        directory_entry.access_time.minutes = 0;
-        directory_entry.access_time.seconds = 0;
+            wait_reason.tag = .futex;
+            wait_reason.result = 0;
+            wait_reason.payload = .{ .futex = .{
+                .address = &client.channel.request.empty.state,
+                .expected_value = old_state,
+            } };
+        }
 
-        directory_entry.modification_time.year = @as(u16, 1980) + fat_directory_entry.modification_date.year;
-        directory_entry.modification_time.month = fat_directory_entry.modification_date.month;
-        directory_entry.modification_time.day = fat_directory_entry.modification_date.day;
-        directory_entry.modification_time.hours = fat_directory_entry.modification_time.hour;
-        directory_entry.modification_time.minutes = fat_directory_entry.modification_time.minute;
-        directory_entry.modification_time.seconds = @as(u8, 2) * fat_directory_entry.modification_time.second;
+        const client_index = syscall.wait(wait_reasons, math.maxInt(usize)) catch @panic("wait error");
+        syscall.unpackResult(syscall.WaitError!void, wait_reasons[client_index].result) catch |err| switch (err) {
+            error.WouldBlock => {},
+            else => @panic("wait error"),
+        };
+        const client = &clients.items[client_index];
+        const request_channel = &client.channel.request;
+        request_channel.mutex.lock();
+        defer request_channel.mutex.unlock();
 
-        directory_entry.size = fat_directory_entry.size;
+        if (!request_channel.isEmpty()) {
+            request_out.* = request_channel.readLockedAssumeCapacity();
+            client_out.* = client;
+            request_channel.full.notify(.one);
+            return;
+        }
     }
+}
 
-    return n;
+fn read(client: *Client, request: Request.Read) Response.Read {
+    const directory_entries_start: [*]file_system.DirectoryEntry = @alignCast(@ptrCast(&client.channel.buffer[request.buffer_offset]));
+    const directory_entries = directory_entries_start[0..request.n];
+    return client.read(directory_entries);
 }
 
 fn changeWorkingDirectory(client: *Client, request: Request.ChangeWorkingDirectory) Response.ChangeWorkingDirectory {
     if (request.path_offset + request.path_length > file_system.buffer_capacity)
         return -1;
-    if (request.path_length == 0) {
-        client.working_directory_sector = client.root_directory_sector;
-        return 0;
-    }
-
     const path = client.channel.buffer[request.path_offset..][0..request.path_length];
-    const path_is_absolute = path[0] == '/';
-    var path_it = mem.tokenizeScalar(u8, path, '/');
-
-    var start_sector = if (path_is_absolute) client.root_directory_sector else client.working_directory_sector;
-    var dir_it = fat.DirectoryEntry.Iterator.init(start_sector);
-
-    var file_name_buf: [file_system.DirectoryEntry.name_capacity]u8 = undefined;
-    var file_name_slice: []u8 = &file_name_buf;
-
-    while (path_it.next()) |path_part| {
-        while (dir_it.next(&file_name_slice)) |directory_entry| : (file_name_slice = &file_name_buf) {
-            if (mem.eql(u8, file_name_slice, path_part)) {
-                if (!directory_entry.attributes.directory)
-                    return -3;
-                start_sector = if (directory_entry.cluster_number_low == 0)
-                    client.root_directory_sector
-                else
-                    fat.sectorFromCluster(directory_entry.cluster_number_low);
-                dir_it = fat.DirectoryEntry.Iterator.init(start_sector);
-                break;
-            }
-        } else return -2;
-    }
-
-    client.working_directory_sector = start_sector;
+    client.changeWorkingDirectory(path) catch return -2;
     return 0;
 }
 
