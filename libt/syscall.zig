@@ -80,6 +80,11 @@ pub fn regionWrite(owner_process: Handle, target_region: Handle, from: *const an
     return unpackResult(RegionWriteError!void, syscall5(.region_write, @intFromEnum(owner_process), @intFromEnum(target_region), @intFromPtr(from), offset, length));
 }
 
+pub const RegionSizeError = error{ InvalidParameter, NoPermission, InvalidType };
+pub fn regionSize(owner_process: Handle, target_region: Handle) RegionSizeError!usize {
+    return unpackResult(RegionSizeError!usize, syscall2(.region_size, @intFromEnum(owner_process), @intFromEnum(target_region)));
+}
+
 pub const ThreadAllocateError = error{ InvalidParameter, NoPermission, InvalidType, OutOfMemory };
 pub fn threadAllocate(owner_process: Handle, target_process: Handle, instruction_pointer: *const anyopaque, stack_pointer: *anyopaque, a0: usize, a1: usize) ThreadAllocateError!Handle {
     return unpackResult(ThreadAllocateError!Handle, syscall6(.thread_allocate, @intFromEnum(owner_process), @intFromEnum(target_process), @intFromPtr(instruction_pointer), @intFromPtr(stack_pointer), a0, a1));

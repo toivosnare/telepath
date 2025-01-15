@@ -142,6 +142,7 @@ fn handleSyscall(current_thread: *Thread) noreturn {
         .region_map => syscall.regionMap(current_thread),
         .region_unmap => syscall.regionUnmap(current_thread),
         .region_write => syscall.regionWrite(current_thread),
+        .region_size => syscall.regionSize(current_thread),
         .thread_allocate => syscall.threadAllocate(current_thread),
         .thread_free => syscall.threadFree(current_thread),
         .thread_share => syscall.threadShare(current_thread),
