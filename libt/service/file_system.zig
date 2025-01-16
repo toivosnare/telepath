@@ -1,9 +1,11 @@
 const libt = @import("../libt.zig");
 const Channel = libt.service.Channel;
+const Handle = libt.Handle;
 
 pub const Operation = enum(u8) {
     read = 0,
     change_working_directory = 1,
+    open = 2,
 };
 
 pub const Request = extern struct {
@@ -14,6 +16,7 @@ pub const Request = extern struct {
     pub const Payload = extern union {
         read: Read,
         change_working_directory: ChangeWorkingDirectory,
+        open: Open,
     };
 
     pub const Read = extern struct {
@@ -25,6 +28,12 @@ pub const Request = extern struct {
         path_offset: usize,
         path_length: usize,
     };
+
+    pub const Open = extern struct {
+        path_offset: usize,
+        path_length: usize,
+        handle: Handle,
+    };
 };
 
 pub const Response = extern struct {
@@ -35,10 +44,12 @@ pub const Response = extern struct {
     pub const Payload = extern union {
         read: Read,
         change_working_directory: ChangeWorkingDirectory,
+        open: Open,
     };
 
     pub const Read = usize;
     pub const ChangeWorkingDirectory = isize;
+    pub const Open = isize;
 };
 
 pub const DirectoryEntry = extern struct {

@@ -134,6 +134,7 @@ fn worker() void {
         const payload: Response.Payload = switch (request.op) {
             .read => .{ .read = read(client, request.payload.read) },
             .change_working_directory => .{ .change_working_directory = changeWorkingDirectory(client, request.payload.change_working_directory) },
+            .open => .{ .open = open(client, request.payload.open) },
         };
         client.channel.response.write(.{
             .token = request.token,
@@ -201,6 +202,36 @@ fn changeWorkingDirectory(client: *Client, request: Request.ChangeWorkingDirecto
         return -1;
     const path = client.channel.buffer[request.path_offset..][0..request.path_length];
     client.changeWorkingDirectory(path) catch return -2;
+    return 0;
+}
+
+fn open(client: *Client, request: Request.Open) Response.Open {
+    // TODO: These functions should return errors instead of negative integers.
+    // errdefer syscall.regionFree(.self, request.handle) catch {};
+
+    if (request.path_offset + request.path_length > file_system.buffer_capacity)
+        return -1;
+    if (request.path_length == 0)
+        return -2;
+    const path = client.channel.buffer[request.path_offset..][0..request.path_length];
+
+    const lookup_result = client.open(path) catch return -3;
+    if (lookup_result != .directory)
+        return -4;
+
+    const channel_size = math.divCeil(usize, @sizeOf(file_system.provide.Type), mem.page_size) catch unreachable;
+    const region_size = syscall.regionSize(.self, request.handle) catch return -5;
+    if (region_size < channel_size)
+        return -6;
+
+    const new_client = clients.addOne() catch return -7;
+    const channel_ptr = syscall.regionMap(.self, request.handle, null) catch return -8;
+    new_client.* = .{
+        .channel = @ptrCast(channel_ptr),
+        .root_directory = lookup_result.directory,
+        .working_directory = lookup_result.directory,
+    };
+
     return 0;
 }
 

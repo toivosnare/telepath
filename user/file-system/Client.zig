@@ -66,6 +66,10 @@ pub fn changeWorkingDirectory(self: *Client, path: []const u8) !void {
     self.working_directory = lookup_result.directory;
 }
 
+pub fn open(self: *Client, path: []const u8) !LookupResult {
+    return self.lookup(path);
+}
+
 pub const LookupResult = union(enum) {
     directory: Directory,
     file: File,
