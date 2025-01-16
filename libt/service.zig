@@ -4,7 +4,7 @@ const io = std.io;
 const AnyWriter = io.AnyWriter;
 const AnyReader = io.AnyReader;
 const Keccak = std.crypto.hash.sha3.Keccak(1600, 32, 0x06, 24);
-const libt = @import("libt.zig");
+const libt = @import("root.zig");
 const Mutex = libt.sync.Mutex;
 const Condvar = libt.sync.Condvar;
 

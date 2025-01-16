@@ -1,9 +1,9 @@
-const libt = @import("libt.zig");
-const syscall = libt.syscall;
 const std = @import("std");
 const math = std.math;
 const mem = std.mem;
 const Allocator = mem.Allocator;
+const libt = @import("root.zig");
+const syscall = libt.syscall;
 
 pub const page_allocator: Allocator = .{
     .ptr = undefined,

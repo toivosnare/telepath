@@ -1,7 +1,7 @@
 const std = @import("std");
 const root = @import("root");
 const options = @import("options");
-const libt = @import("libt.zig");
+const libt = @import("root.zig");
 const syscall = libt.syscall;
 
 comptime {

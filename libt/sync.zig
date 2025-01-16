@@ -1,7 +1,7 @@
 const std = @import("std");
 const atomic = std.atomic;
 const math = std.math;
-const libt = @import("libt.zig");
+const libt = @import("root.zig");
 const syscall = libt.syscall;
 
 pub const Mutex = extern struct {

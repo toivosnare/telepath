@@ -1,4 +1,4 @@
-const libt = @import("../libt.zig");
+const libt = @import("../root.zig");
 const Channel = libt.service.Channel;
 const Handle = libt.Handle;
 

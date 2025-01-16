@@ -1,7 +1,7 @@
 const std = @import("std");
 const atomic = std.atomic;
 const page_size = std.mem.page_size;
-const libt = @import("libt.zig");
+const libt = @import("root.zig");
 const Handle = libt.Handle;
 
 pub const Id = enum(usize) {

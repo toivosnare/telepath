@@ -16,7 +16,7 @@ pub fn build(b: *Build) void {
     const module = b.addModule("libt", .{
         .target = target,
         .optimize = optimize,
-        .root_source_file = b.path("libt.zig"),
+        .root_source_file = b.path("root.zig"),
     });
     module.addOptions("options", options);
 }
