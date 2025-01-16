@@ -86,8 +86,8 @@ pub fn regionSize(owner_process: Handle, target_region: Handle) RegionSizeError!
 }
 
 pub const ThreadAllocateError = error{ InvalidParameter, NoPermission, InvalidType, OutOfMemory };
-pub fn threadAllocate(owner_process: Handle, target_process: Handle, instruction_pointer: *const anyopaque, stack_pointer: *anyopaque, a0: usize, a1: usize) ThreadAllocateError!Handle {
-    return unpackResult(ThreadAllocateError!Handle, syscall6(.thread_allocate, @intFromEnum(owner_process), @intFromEnum(target_process), @intFromPtr(instruction_pointer), @intFromPtr(stack_pointer), a0, a1));
+pub fn threadAllocate(owner_process: Handle, target_process: Handle, instruction_pointer: *const anyopaque, stack_pointer: *anyopaque, a0: usize, a1: usize, a2: usize) ThreadAllocateError!Handle {
+    return unpackResult(ThreadAllocateError!Handle, syscall7(.thread_allocate, @intFromEnum(owner_process), @intFromEnum(target_process), @intFromPtr(instruction_pointer), @intFromPtr(stack_pointer), a0, a1, a2));
 }
 
 pub const ThreadFreeError = error{ InvalidParameter, NoPermission, InvalidType };
@@ -311,6 +311,21 @@ inline fn syscall6(id: Id, arg1: usize, arg2: usize, arg3: usize, arg4: usize, a
           [arg4] "{a4}" (arg4),
           [arg5] "{a5}" (arg5),
           [arg6] "{a6}" (arg6),
+        : "memory"
+    );
+}
+
+inline fn syscall7(id: Id, arg1: usize, arg2: usize, arg3: usize, arg4: usize, arg5: usize, arg6: usize, arg7: usize) usize {
+    return asm volatile ("ecall"
+        : [ret] "={a0}" (-> usize),
+        : [id] "{a0}" (@intFromEnum(id)),
+          [arg1] "{a1}" (arg1),
+          [arg2] "{a2}" (arg2),
+          [arg3] "{a3}" (arg3),
+          [arg4] "{a4}" (arg4),
+          [arg5] "{a5}" (arg5),
+          [arg6] "{a6}" (arg6),
+          [arg7] "{a7}" (arg7),
         : "memory"
     );
 }

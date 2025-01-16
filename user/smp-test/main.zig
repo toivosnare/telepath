@@ -19,7 +19,7 @@ pub fn main(args: []usize) !void {
     const stack_start: [*]align(page_size) u8 = @ptrCast(try syscall.regionMap(.self, stack_handle, null));
     const stack_end = stack_start + stack_pages * page_size;
 
-    _ = try syscall.threadAllocate(.self, .self, @ptrCast(&writeInLoop), stack_end, 'B', 2_000_000);
+    _ = try syscall.threadAllocate(.self, .self, @ptrCast(&writeInLoop), stack_end, 'B', 2_000_000, 0);
     try writeInLoop('A', 1_000_000);
 }
 

@@ -493,6 +493,7 @@ pub fn allocateThread(
     stack_pointer: usize,
     a0: usize,
     a1: usize,
+    a2: usize,
 ) !Handle {
     self.lock.lock();
     defer self.lock.unlock();
@@ -519,6 +520,7 @@ pub fn allocateThread(
     thread.context.sp = stack_pointer;
     thread.context.a0 = a0;
     thread.context.a1 = a1;
+    thread.context.a2 = a2;
     proc.scheduler.enqueue(thread);
 
     return capability.toHandle();

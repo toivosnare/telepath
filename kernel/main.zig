@@ -210,7 +210,7 @@ export fn bootHartMain(boot_hart_id: Hart.Id, fdt_physical_start: PhysicalAddres
         end += mm.page_allocator.max_order_pages;
     }
 
-    _ = init_process.allocateThread(.self, entry_point, 0, fdt_address, 0) catch @panic("OOM");
+    _ = init_process.allocateThread(.self, entry_point, 0, fdt_address, 0, 0) catch @panic("OOM");
 
     const satp: riscv.satp.Type = .{
         .ppn = @bitCast(PhysicalPageNumber.fromPageTable(init_process.page_table)),

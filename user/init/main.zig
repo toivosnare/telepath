@@ -135,7 +135,7 @@ fn loadElf(elf_bytes: []const u8, service_map: *ServiceMap) !Handle {
     const stack_start: [*]align(mem.page_size) u8 = stack_end - stack_size * mem.page_size;
     _ = try syscall.regionMap(process, region, stack_start);
 
-    return syscall.threadAllocate(.self, process, @ptrFromInt(header.entry), stack_end, 0, 0);
+    return syscall.threadAllocate(.self, process, @ptrFromInt(header.entry), stack_end, 0, 0, 0);
 }
 
 fn handleLoadSegment(process: Handle, header: elf.Elf64_Phdr, elf_bytes: []const u8) !void {
