@@ -119,13 +119,14 @@ fn loadElf(elf_bytes: []const u8, service_map: *ServiceMap) !Handle {
         return error.InvalidExecutable;
 
     const process = try syscall.processAllocate(.self);
+    var args = std.BoundedArray(Handle, 3).init(0) catch unreachable;
 
     var it = header.program_header_iterator(&stream);
     while (try it.next()) |program_header| {
         if (program_header.p_type == elf.PT_LOAD) {
             try handleLoadSegment(process, program_header, elf_bytes);
         } else if (program_header.p_type >= elf.PT_LOOS and program_header.p_type <= elf.PT_HIOS) {
-            try handleServiceSegment(process, program_header, service_map);
+            try handleServiceSegment(process, program_header, service_map, &args);
         }
     }
 
@@ -135,7 +136,11 @@ fn loadElf(elf_bytes: []const u8, service_map: *ServiceMap) !Handle {
     const stack_start: [*]align(mem.page_size) u8 = stack_end - stack_size * mem.page_size;
     _ = try syscall.regionMap(process, region, stack_start);
 
-    return syscall.threadAllocate(.self, process, @ptrFromInt(header.entry), stack_end, 0, 0, 0);
+    const args_slice = args.constSlice();
+    const a0 = if (args_slice.len > 0) @intFromEnum(args_slice[0]) else 0;
+    const a1 = if (args_slice.len > 1) @intFromEnum(args_slice[1]) else 0;
+    const a2 = if (args_slice.len > 2) @intFromEnum(args_slice[2]) else 0;
+    return syscall.threadAllocate(.self, process, @ptrFromInt(header.entry), stack_end, a0, a1, a2);
 }
 
 fn handleLoadSegment(process: Handle, header: elf.Elf64_Phdr, elf_bytes: []const u8) !void {
@@ -156,7 +161,7 @@ fn handleLoadSegment(process: Handle, header: elf.Elf64_Phdr, elf_bytes: []const
     try syscall.regionWrite(process, region, source, offset, header.p_filesz);
 }
 
-fn handleServiceSegment(process: Handle, header: elf.Elf64_Phdr, service_map: *ServiceMap) !void {
+fn handleServiceSegment(process: Handle, header: elf.Elf64_Phdr, service_map: *ServiceMap, args: *std.BoundedArray(Handle, 3)) !void {
     const start_address = mem.alignBackward(usize, header.p_vaddr, mem.page_size);
     const end_address = mem.alignForward(usize, header.p_vaddr + header.p_memsz, mem.page_size);
     const size = (end_address - start_address) / mem.page_size;
@@ -166,13 +171,16 @@ fn handleServiceSegment(process: Handle, header: elf.Elf64_Phdr, service_map: *S
         .execute = header.p_flags & elf.PF_X != 0,
     };
 
-    if (header.p_flags & service.Flags.mask_p != 0) {
+    const region = if (header.p_flags & service.Flags.mask_p != 0) blk: {
         const region = try syscall.regionAllocate(process, size, permissions, null);
-        _ = try syscall.regionMap(process, region, @ptrFromInt(start_address));
         try service_map.put(header.p_type, .{ .process = process, .region = region });
-    } else {
+        break :blk region;
+    } else blk: {
         const service_provider = service_map.get(header.p_type) orelse return error.ServiceMissing;
-        const region = try syscall.regionShare(service_provider.process, service_provider.region, process, permissions);
-        _ = try syscall.regionMap(process, region, @ptrFromInt(start_address));
-    }
+        const provider_handle = try syscall.processShare(.self, service_provider.process, process, .{});
+        args.append(provider_handle) catch {};
+        break :blk try syscall.regionShare(service_provider.process, service_provider.region, process, permissions);
+    };
+
+    _ = try syscall.regionMap(process, region, @ptrFromInt(start_address));
 }
