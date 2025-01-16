@@ -76,37 +76,38 @@ pub const LookupResult = union(enum) {
 };
 fn lookup(self: Client, path: []const u8) !LookupResult {
     const path_is_absolute = path[0] == '/';
-    var dir = if (path_is_absolute) self.root_directory else self.working_directory;
+    var result: LookupResult = .{ .directory = if (path_is_absolute) self.root_directory else self.working_directory };
 
     var path_it = mem.tokenizeScalar(u8, path, '/');
     var file_name_buf: [file_system.DirectoryEntry.name_capacity]u8 = undefined;
     var file_name_slice: []u8 = &file_name_buf;
 
     while (path_it.next()) |path_part| {
-        var dir_it = dir.iterator();
-        const last_part = path_it.peek() == null;
+        if (result == .file)
+            return error.NotFound;
+        if (mem.eql(u8, path_part, "..") and result.directory.eql(self.root_directory))
+            continue;
 
+        var dir_it = result.directory.iterator();
         while (dir_it.next(&file_name_slice)) |directory_entry| : (file_name_slice = &file_name_buf) {
             if (!mem.eql(u8, file_name_slice, path_part))
                 continue;
 
-            const is_dir = directory_entry.attributes.directory;
-            if (is_dir) {
-                dir = if (directory_entry.cluster_number_low == 0)
-                    self.root_directory
-                else
-                    .{ .sector_index = fat.sectorFromCluster(directory_entry.cluster_number_low) };
-                if (last_part)
-                    return .{ .directory = dir };
-            } else {
-                if (last_part) {
-                    return .{ .file = .{ .sector_index = fat.sectorFromCluster(directory_entry.cluster_number_low) } };
-                } else {
-                    return error.NotFound;
-                }
+            if (directory_entry.cluster_number_low == 0) {
+                result = .{ .directory = self.root_directory };
+                break;
             }
+
+            const sector_index = fat.sectorFromCluster(directory_entry.cluster_number_low);
+            const is_dir = directory_entry.attributes.directory;
+            result = if (is_dir)
+                .{ .directory = .{ .sector_index = sector_index } }
+            else
+                .{ .file = .{ .sector_index = sector_index } };
+
             break;
         } else return error.NotFound;
     }
-    unreachable;
+
+    return result;
 }

@@ -29,6 +29,10 @@ pub const Directory = struct {
         return .{ .cache_entry = cache.getSector(self.sector_index) };
     }
 
+    pub fn eql(self: Directory, other: Directory) bool {
+        return self.sector_index == other.sector_index;
+    }
+
     pub const Entry = extern union {
         normal: Normal,
         long_file_name: LongFileName,
