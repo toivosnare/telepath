@@ -11,6 +11,7 @@ const Condvar = libt.sync.Condvar;
 pub const serial_driver = @import("service/serial_driver.zig");
 pub const block_driver = @import("service/block_driver.zig");
 pub const file_system = @import("service/file_system.zig");
+pub const file = @import("service/file.zig");
 
 pub fn hash(comptime Service: type) u32 {
     var result: u32 = undefined;

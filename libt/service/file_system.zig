@@ -48,8 +48,8 @@ pub const Response = extern struct {
     };
 
     pub const Read = usize;
-    pub const ChangeWorkingDirectory = isize;
-    pub const Open = isize;
+    pub const ChangeWorkingDirectory = bool;
+    pub const Open = bool;
 };
 
 pub const DirectoryEntry = extern struct {
@@ -81,7 +81,7 @@ pub const buffer_capacity = 256;
 
 pub const provide = struct {
     pub const Type = extern struct {
-        request: Channel(Request, channel_capacity, .bidirectional) = .{},
+        request: Channel(Request, channel_capacity, .receive) = .{},
         response: Channel(Response, channel_capacity, .transmit) = .{},
         buffer: [buffer_capacity]u8 = undefined,
     };

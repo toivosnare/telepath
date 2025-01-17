@@ -5,14 +5,12 @@ const ArrayList = std.ArrayList;
 const math = std.math;
 const mem = std.mem;
 const libt = @import("libt");
-const file_system = libt.service.file_system;
-const Request = file_system.Request;
-const Response = file_system.Response;
+const service = libt.service;
 const syscall = libt.syscall;
 const WaitReason = syscall.WaitReason;
 const cache = @import("cache.zig");
 const fat = @import("fat.zig");
-const Client = @import("Client.zig");
+const Client = @import("client.zig").Client;
 const services = @import("services");
 
 pub const os = libt;
@@ -93,11 +91,11 @@ pub fn main(args: []usize) !void {
     allocator.free(sector_buf);
 
     clients = ArrayList(Client).init(allocator);
-    try clients.append(.{
+    try clients.append(.{ .directory = .{
         .channel = services.client,
         .root_directory = .{ .sector_index = root_directory_sector },
         .working_directory = .{ .sector_index = root_directory_sector },
-    });
+    } });
 
     // Allocate and map a stack for the worker thread.
     const stack_pages = 16;
@@ -126,50 +124,26 @@ fn readSector(sector_index: usize, buf: *[sector_size]u8) !void {
 }
 
 fn worker() void {
-    log.info("worker running", .{});
     while (true) {
-        var request: Request = undefined;
+        var request: Client.Request = undefined;
         var client: *Client = undefined;
         getRequest(&request, &client);
-        const payload: Response.Payload = switch (request.op) {
-            .read => .{ .read = read(client, request.payload.read) },
-            .change_working_directory => .{ .change_working_directory = changeWorkingDirectory(client, request.payload.change_working_directory) },
-            .open => .{ .open = open(client, request.payload.open) },
-        };
-        client.channel.response.write(.{
-            .token = request.token,
-            .op = request.op,
-            .payload = payload,
-        });
+        client.handleRequest(request);
     }
 }
 
-fn getRequest(request_out: *Request, client_out: **Client) void {
+fn getRequest(request_out: *Client.Request, client_out: **Client) void {
     const wait_reasons = clients.allocator.alloc(WaitReason, clients.items.len) catch @panic("OOM");
     defer clients.allocator.free(wait_reasons);
 
     while (true) {
-        for (wait_reasons, clients.items) |*wait_reason, *client| {
-            const request_channel = &client.channel.request;
-            request_channel.mutex.lock();
-
-            if (!request_channel.isEmpty()) {
-                request_out.* = request_channel.readLockedAssumeCapacity();
+        for (clients.items, wait_reasons) |*client, *wait_reason| {
+            if (client.hasRequest(request_out, wait_reason)) {
                 client_out.* = client;
-                request_channel.full.notify(.one);
-                request_channel.mutex.unlock();
                 return;
             }
-
-            const old_state = request_channel.empty.state.load(.monotonic);
-            request_channel.mutex.unlock();
-
             wait_reason.tag = .futex;
             wait_reason.result = 0;
-            wait_reason.payload = .{ .futex = .{
-                .address = &client.channel.request.empty.state,
-                .expected_value = old_state,
-            } };
         }
 
         const client_index = syscall.wait(wait_reasons, math.maxInt(usize)) catch @panic("wait error");
@@ -177,62 +151,17 @@ fn getRequest(request_out: *Request, client_out: **Client) void {
             error.WouldBlock => {},
             else => @panic("wait error"),
         };
-        const client = &clients.items[client_index];
-        const request_channel = &client.channel.request;
-        request_channel.mutex.lock();
-        defer request_channel.mutex.unlock();
 
-        if (!request_channel.isEmpty()) {
-            request_out.* = request_channel.readLockedAssumeCapacity();
+        const client = &clients.items[client_index];
+        if (client.hasRequest(request_out, null)) {
             client_out.* = client;
-            request_channel.full.notify(.one);
             return;
         }
     }
 }
 
-fn read(client: *Client, request: Request.Read) Response.Read {
-    const directory_entries_start: [*]file_system.DirectoryEntry = @alignCast(@ptrCast(&client.channel.buffer[request.buffer_offset]));
-    const directory_entries = directory_entries_start[0..request.n];
-    return client.read(directory_entries);
-}
-
-fn changeWorkingDirectory(client: *Client, request: Request.ChangeWorkingDirectory) Response.ChangeWorkingDirectory {
-    if (request.path_offset + request.path_length > file_system.buffer_capacity)
-        return -1;
-    const path = client.channel.buffer[request.path_offset..][0..request.path_length];
-    client.changeWorkingDirectory(path) catch return -2;
-    return 0;
-}
-
-fn open(client: *Client, request: Request.Open) Response.Open {
-    // TODO: These functions should return errors instead of negative integers.
-    // errdefer syscall.regionFree(.self, request.handle) catch {};
-
-    if (request.path_offset + request.path_length > file_system.buffer_capacity)
-        return -1;
-    if (request.path_length == 0)
-        return -2;
-    const path = client.channel.buffer[request.path_offset..][0..request.path_length];
-
-    const lookup_result = client.open(path) catch return -3;
-    if (lookup_result != .directory)
-        return -4;
-
-    const channel_size = math.divCeil(usize, @sizeOf(file_system.provide.Type), mem.page_size) catch unreachable;
-    const region_size = syscall.regionSize(.self, request.handle) catch return -5;
-    if (region_size < channel_size)
-        return -6;
-
-    const new_client = clients.addOne() catch return -7;
-    const channel_ptr = syscall.regionMap(.self, request.handle, null) catch return -8;
-    new_client.* = .{
-        .channel = @ptrCast(channel_ptr),
-        .root_directory = lookup_result.directory,
-        .working_directory = lookup_result.directory,
-    };
-
-    return 0;
+pub fn addClient() !*Client {
+    return clients.addOne();
 }
 
 pub fn logFn(
