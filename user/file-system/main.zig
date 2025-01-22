@@ -8,7 +8,9 @@ const libt = @import("libt");
 const service = libt.service;
 const syscall = libt.syscall;
 const WaitReason = syscall.WaitReason;
-const cache = @import("cache.zig");
+const scache = @import("sector_cache.zig");
+const Sector = scache.Sector;
+const fcache = @import("file_cache.zig");
 const fat = @import("fat.zig");
 const Client = @import("client.zig").Client;
 const services = @import("services");
@@ -70,7 +72,7 @@ pub fn main(args: []usize) !void {
 
     const sector_buf = try allocator.alloc(u8, sector_size);
 
-    try readSector(0, @ptrCast(sector_buf.ptr));
+    try readSector(.mbr, @ptrCast(sector_buf.ptr));
     const mbr: *const MasterBootRecord = @ptrCast(sector_buf.ptr);
     if (!mem.eql(u8, &mbr.boot_signature, &MasterBootRecord.boot_signature)) {
         try writer.writeAll("Invalid MBR boot signature.\n");
@@ -85,17 +87,19 @@ pub fn main(args: []usize) !void {
         return error.NoValidPartition;
     };
 
-    const vbr_sector = partition.lba_first;
+    const vbr_sector: Sector = @enumFromInt(partition.lba_first);
     try readSector(vbr_sector, @ptrCast(sector_buf.ptr));
     const root_directory_sector = fat.init(vbr_sector, @ptrCast(sector_buf.ptr));
     allocator.free(sector_buf);
 
     clients = ArrayList(Client).init(allocator);
+    const root_fcache_entry = fcache.init(root_directory_sector);
+
     try clients.append(.{ .directory = .{
         .channel = services.client,
-        .root_directory = .{ .sector_index = root_directory_sector },
-        .working_directory = .{ .sector_index = root_directory_sector },
+        .root_directory = root_fcache_entry,
     } });
+    scache.init();
 
     // Allocate and map a stack for the worker thread.
     const stack_pages = 16;
@@ -106,14 +110,13 @@ pub fn main(args: []usize) !void {
     const worker_handle = try syscall.threadAllocate(.self, .self, &worker, stack_end, 0, 0, 0);
     _ = worker_handle;
 
-    cache.init();
-    cache.loop();
+    scache.loop();
 }
 
-fn readSector(sector_index: usize, buf: *[sector_size]u8) !void {
+fn readSector(sector: Sector, buf: *[sector_size]u8) !void {
     const physical_address = try syscall.processTranslate(.self, buf);
     services.block.request.write(.{
-        .sector_index = sector_index,
+        .sector_index = @intFromEnum(sector),
         .address = @intFromPtr(physical_address),
         .write = false,
         .token = 0,
@@ -162,6 +165,11 @@ fn getRequest(request_out: *Client.Request, client_out: **Client) void {
 
 pub fn addClient() !*Client {
     return clients.addOne();
+}
+
+pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
+    log.err("PANIC: {s}", .{msg});
+    while (true) {}
 }
 
 pub fn logFn(

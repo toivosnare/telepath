@@ -19,9 +19,17 @@ var lru_list_tail: ?*Entry = null;
 var entries: [entry_count]Entry = undefined;
 var entries_physical_base: usize = undefined;
 
+pub const Sector = enum(usize) {
+    mbr = 0,
+    invalid = math.maxInt(usize),
+    _,
+
+    pub const size = 512;
+};
+
 pub const Entry = struct {
-    sector_index: usize,
-    data: [sector_size]u8,
+    sector: Sector,
+    data: [Sector.size]u8,
     state: State,
     ref_count: u8,
     hash_chain_next: ?*Entry,
@@ -33,8 +41,6 @@ pub const Entry = struct {
         dirty,
         fetching,
     };
-
-    pub const sector_size = 512;
 
     pub fn removeFromLruList(self: *Entry) void {
         if (self.lru_list_prev) |prev|
@@ -49,7 +55,7 @@ pub const Entry = struct {
     }
 
     pub fn removeFromHashChain(self: *Entry) void {
-        const bucket = &hash_buckets[self.sector_index & hash_mask];
+        const bucket = &hash_buckets[@intFromEnum(self.sector) & hash_mask];
         var prev_entry: ?*Entry = null;
         var entry = bucket.*;
         while (entry) |e| {
@@ -98,7 +104,7 @@ pub fn init() void {
 
     var prev: ?*Entry = null;
     for (&entries) |*entry| {
-        entry.sector_index = 0;
+        entry.sector = .invalid;
         entry.state = .clean;
         entry.ref_count = 0;
         entry.hash_chain_next = null;
@@ -116,13 +122,13 @@ pub fn init() void {
     entries_physical_base = @intFromPtr(libt.syscall.processTranslate(.self, &entries) catch unreachable);
 }
 
-pub fn getSector(sector_index: usize) *Entry {
+pub fn get(sector: Sector) *Entry {
     lock.lock();
 
-    const bucket = &hash_buckets[sector_index & hash_mask];
+    const bucket = &hash_buckets[@intFromEnum(sector) & hash_mask];
     var entry = bucket.*;
     while (entry) |e| : (entry = e.hash_chain_next) {
-        if (e.sector_index == sector_index) {
+        if (e.sector == sector) {
             e.ref_count += 1;
 
             if (e.state == .fetching) {
@@ -145,7 +151,7 @@ pub fn getSector(sector_index: usize) *Entry {
         @panic("dirty");
     }
 
-    evided_entry.sector_index = sector_index;
+    evided_entry.sector = sector;
     evided_entry.state = .fetching;
     evided_entry.ref_count = 1;
 
@@ -156,7 +162,7 @@ pub fn getSector(sector_index: usize) *Entry {
     lock.unlock();
 
     block.request.write(.{
-        .sector_index = sector_index,
+        .sector_index = @intFromEnum(sector),
         .address = physical_address,
         .write = false,
         .token = @intFromPtr(evided_entry),
@@ -166,7 +172,7 @@ pub fn getSector(sector_index: usize) *Entry {
     return evided_entry;
 }
 
-pub fn returnSector(entry: *Entry) void {
+pub fn put(entry: *Entry) void {
     lock.lock();
     defer lock.unlock();
 
