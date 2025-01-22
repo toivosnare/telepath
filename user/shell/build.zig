@@ -12,8 +12,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     }, &[_]libt.ServiceOptions{
-        .{ .name = "serial", .service = service.serial_driver },
-        .{ .name = "block", .service = service.block_driver },
+        .{ .name = "serial_driver", .service = service.serial_driver },
+        .{ .name = "block_driver", .service = service.block_driver },
         .{ .name = "file_system", .service = service.file_system },
     });
 
