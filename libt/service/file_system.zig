@@ -18,9 +18,8 @@ pub const Request = extern struct {
     };
 
     pub const Read = extern struct {
-        path_offset: usize,
-        path_length: usize,
-        buffer_offset: usize,
+        handle: Handle,
+        offset: usize,
         n: usize,
     };
 

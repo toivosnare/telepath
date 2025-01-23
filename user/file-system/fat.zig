@@ -27,6 +27,10 @@ pub const DirectoryEntry = extern union {
     normal: Normal,
     long_file_name: LongFileName,
 
+    pub fn isLongFileNameEntry(self: DirectoryEntry) bool {
+        return @as(u8, @bitCast(self.normal.attributes)) == @as(u8, @bitCast(Attributes.long_file_name));
+    }
+
     pub const Normal = extern struct {
         name: [name_capacity]u8,
         extension: [extension_capacity]u8,

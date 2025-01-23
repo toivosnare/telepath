@@ -44,6 +44,7 @@ pub const Client = union(enum) {
 pub const Directory = struct {
     channel: *service.file_system.provide.Type,
     root_directory: *fcache.Entry,
+    seek_offset: usize = 0,
 
     pub const Request = service.file_system.Request;
     pub const Response = service.file_system.Response;
@@ -83,61 +84,8 @@ pub const Directory = struct {
         });
     }
 
-    pub fn read(self: Directory, request: Request.Read) usize {
-        if (request.path_offset + request.path_length > service.file_system.buffer_capacity)
-            return 0;
-        if (request.path_length == 0)
-            return 0;
-        const path = self.channel.buffer[request.path_offset..][0..request.path_length];
-
-        const dir = self.root_directory.lookup(path) catch return 0;
-        defer dir.unref();
-        if (dir.kind != .directory)
-            return 0;
-
-        const directory_entries_start: [*]service.file_system.DirectoryEntry = @alignCast(@ptrCast(&self.channel.buffer[request.buffer_offset]));
-        const directory_entries = directory_entries_start[0..request.n];
-
-        var file_name_buf: [service.file_system.DirectoryEntry.name_capacity]u8 = undefined;
-        var it = dir.directoryIterator() catch unreachable;
-        var n: usize = 0;
-
-        for (directory_entries) |*directory_entry| {
-            var file_name_slice: []u8 = &file_name_buf;
-            const fat_directory_entry: *fat.DirectoryEntry.Normal = it.next(&file_name_slice) orelse break;
-
-            @memcpy(directory_entry.name[0..file_name_slice.len], file_name_slice);
-            directory_entry.name_length = @intCast(file_name_slice.len);
-            directory_entry.flags.directory = fat_directory_entry.attributes.directory;
-
-            directory_entry.creation_time.year = @as(u16, 1980) + fat_directory_entry.creation_date.year;
-            directory_entry.creation_time.month = fat_directory_entry.creation_date.month;
-            directory_entry.creation_time.day = fat_directory_entry.creation_date.day;
-            directory_entry.creation_time.hours = fat_directory_entry.creation_time.hour;
-            directory_entry.creation_time.minutes = fat_directory_entry.creation_time.minute;
-            directory_entry.creation_time.seconds = @as(u8, 2) * fat_directory_entry.creation_time.second;
-            if (fat_directory_entry.creation_time_cs >= 100)
-                directory_entry.creation_time.seconds += 1;
-
-            directory_entry.access_time.year = @as(u16, 1980) + fat_directory_entry.access_date.year;
-            directory_entry.access_time.month = fat_directory_entry.access_date.month;
-            directory_entry.access_time.day = fat_directory_entry.access_date.day;
-            directory_entry.access_time.hours = 0;
-            directory_entry.access_time.minutes = 0;
-            directory_entry.access_time.seconds = 0;
-
-            directory_entry.modification_time.year = @as(u16, 1980) + fat_directory_entry.modification_date.year;
-            directory_entry.modification_time.month = fat_directory_entry.modification_date.month;
-            directory_entry.modification_time.day = fat_directory_entry.modification_date.day;
-            directory_entry.modification_time.hours = fat_directory_entry.modification_time.hour;
-            directory_entry.modification_time.minutes = fat_directory_entry.modification_time.minute;
-            directory_entry.modification_time.seconds = @as(u8, 2) * fat_directory_entry.modification_time.second;
-
-            directory_entry.size = fat_directory_entry.size;
-            n += 1;
-        }
-
-        return n;
+    pub fn read(self: *Directory, request: Request.Read) usize {
+        return self.root_directory.readdir(&self.seek_offset, request.handle, request.offset, request.n);
     }
 
     pub fn open(self: Directory, request: Request.Open) !void {
@@ -181,7 +129,7 @@ pub const Directory = struct {
 pub const File = struct {
     channel: *service.file.provide.Type,
     file: *fcache.Entry,
-    offset: usize = 0,
+    seek_offset: usize = 0,
 
     pub const Request = service.file.Request;
     pub const Response = service.file.Response;
@@ -221,24 +169,8 @@ pub const File = struct {
     }
 
     pub fn read(self: *File, request: Request.Read) usize {
-        // TODO: check overflow.
-        if (self.offset >= self.file.size)
-            return 0;
-        const n = @min(request.n, self.file.size - self.offset);
-        var bytes_written: usize = 0;
-
-        while (bytes_written < n) {
-            const sector = self.file.logicalSectorToPhysical(self.offset / Sector.size);
-            const sentry = scache.get(sector);
-            defer scache.put(sentry);
-
-            const size = @min(n - bytes_written, Sector.size - self.offset % Sector.size);
-            const from = @intFromPtr(&sentry.data) + (self.offset % Sector.size);
-            syscall.regionWrite(.self, request.handle, @ptrFromInt(from), request.offset + bytes_written, size) catch break;
-            bytes_written += size;
-            self.offset += size;
-        }
-
+        const bytes_written = self.file.read(self.seek_offset, request.handle, request.offset, request.n);
+        self.seek_offset += bytes_written;
         return bytes_written;
     }
 };
