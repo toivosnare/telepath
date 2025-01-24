@@ -44,6 +44,7 @@ pub fn hasRequest(self: Directory, request_out: *Client.Request, wait_reason: ?*
 pub fn handleRequest(self: *Directory, request: Request, allocator: Allocator) void {
     const payload: Response.Payload = switch (request.op) {
         .read => .{ .read = self.read(request.payload.read) },
+        .seek => .{ .seek = self.seek(request.payload.seek) },
         .open => .{ .open = if (self.open(request.payload.open, allocator)) true else |_| false },
     };
     self.channel.response.write(.{
@@ -55,6 +56,23 @@ pub fn handleRequest(self: *Directory, request: Request, allocator: Allocator) v
 
 pub fn read(self: *Directory, request: Request.Read) usize {
     return self.root_directory.readdir(&self.seek_offset, request.handle, request.offset, request.n);
+}
+
+pub fn seek(self: *Directory, request: Request.Seek) isize {
+    switch (request.whence) {
+        .set => if (math.cast(usize, request.offset)) |offset| {
+            self.seek_offset = offset;
+        } else {
+            return -1;
+        },
+        .current => if (math.cast(usize, @as(isize, @intCast(self.seek_offset)) + request.offset)) |offset| {
+            self.seek_offset = offset;
+        } else {
+            return -1;
+        },
+    }
+
+    return @intCast(self.seek_offset);
 }
 
 pub fn open(self: Directory, request: Request.Open, allocator: Allocator) !void {
