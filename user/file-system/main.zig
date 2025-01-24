@@ -1,18 +1,17 @@
 const std = @import("std");
 const log = std.log;
 const assert = std.debug.assert;
-const ArrayList = std.ArrayList;
 const math = std.math;
 const mem = std.mem;
+const Allocator = mem.Allocator;
 const libt = @import("libt");
-const service = libt.service;
 const syscall = libt.syscall;
 const WaitReason = syscall.WaitReason;
 const scache = @import("sector_cache.zig");
 const Sector = scache.Sector;
 const fcache = @import("file_cache.zig");
 const fat = @import("fat.zig");
-const Client = @import("client.zig").Client;
+const Client = @import("Client.zig");
 const services = @import("services");
 
 pub const os = libt;
@@ -26,7 +25,9 @@ comptime {
 }
 
 const writer = services.serial.tx.writer();
-var clients: ArrayList(Client) = undefined;
+var clients_head: ?*Client = null;
+var clients_tail: ?*Client = null;
+var clients_len: u32 = 0;
 
 const MasterBootRecord = extern struct {
     bootstrap_code: [446]u8,
@@ -92,13 +93,14 @@ pub fn main(args: []usize) !void {
     const root_directory_sector = fat.init(vbr_sector, @ptrCast(sector_buf.ptr));
     allocator.free(sector_buf);
 
-    clients = ArrayList(Client).init(allocator);
     const root_fcache_entry = fcache.init(root_directory_sector);
-
-    try clients.append(.{ .directory = .{
+    const root_client = try allocator.create(Client);
+    root_client.* = .{ .kind = .{ .directory = .{
         .channel = services.client,
         .root_directory = root_fcache_entry,
-    } });
+    } } };
+    addClient(root_client);
+
     scache.init();
 
     // Allocate and map a stack for the worker thread.
@@ -107,7 +109,7 @@ pub fn main(args: []usize) !void {
     const stack_start: [*]align(mem.page_size) u8 = @ptrCast(try syscall.regionMap(.self, stack_handle, null));
     const stack_end = stack_start + stack_pages * mem.page_size;
 
-    const worker_handle = try syscall.threadAllocate(.self, .self, &worker, stack_end, 0, 0, 0);
+    const worker_handle = try syscall.threadAllocate(.self, .self, &worker, stack_end, @intFromPtr(&allocator), 0, 0);
     _ = worker_handle;
 
     scache.loop();
@@ -126,27 +128,32 @@ fn readSector(sector: Sector, buf: *[sector_size]u8) !void {
         return error.Failed;
 }
 
-fn worker() void {
+fn worker(allocator: *Allocator) void {
     while (true) {
         var request: Client.Request = undefined;
         var client: *Client = undefined;
-        getRequest(&request, &client);
-        client.handleRequest(request);
+        getRequest(&request, &client, allocator.*);
+        client.handleRequest(request, allocator.*);
     }
 }
 
-fn getRequest(request_out: *Client.Request, client_out: **Client) void {
-    const wait_reasons = clients.allocator.alloc(WaitReason, clients.items.len) catch @panic("OOM");
-    defer clients.allocator.free(wait_reasons);
+fn getRequest(request_out: *Client.Request, client_out: **Client, allocator: Allocator) void {
+    const wait_reasons = allocator.alloc(WaitReason, clients_len) catch @panic("OOM");
+    defer allocator.free(wait_reasons);
 
     while (true) {
-        for (clients.items, wait_reasons) |*client, *wait_reason| {
-            if (client.hasRequest(request_out, wait_reason)) {
-                client_out.* = client;
+        var client = clients_head;
+        var i: usize = 0;
+        while (client) |c| : (client = c.next) {
+            const wait_reason = &wait_reasons[i];
+
+            if (c.hasRequest(request_out, wait_reason)) {
+                client_out.* = c;
                 return;
             }
             wait_reason.tag = .futex;
             wait_reason.result = 0;
+            i += 1;
         }
 
         const client_index = syscall.wait(wait_reasons, math.maxInt(usize)) catch @panic("wait error");
@@ -155,16 +162,25 @@ fn getRequest(request_out: *Client.Request, client_out: **Client) void {
             else => @panic("wait error"),
         };
 
-        const client = &clients.items[client_index];
-        if (client.hasRequest(request_out, null)) {
-            client_out.* = client;
-            return;
-        }
+        // const client = &clients.items[client_index];
+        // if (client.hasRequest(request_out, null)) {
+        //     client_out.* = client;
+        //     return;
+        // }
     }
 }
 
-pub fn addClient() !*Client {
-    return clients.addOne();
+pub fn addClient(client: *Client) void {
+    if (clients_tail) |tail| {
+        tail.next = client;
+        client.prev = tail;
+    } else {
+        clients_head = client;
+        client.prev = null;
+    }
+    clients_tail = client;
+    client.next = null;
+    clients_len += 1;
 }
 
 pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
