@@ -43,6 +43,7 @@ pub fn handleRequest(self: *File, request: Request, allocator: Allocator) void {
     _ = allocator;
     const payload: Response.Payload = switch (request.op) {
         .read => .{ .read = self.read(request.payload.read) },
+        .seek => .{ .seek = self.seek(request.payload.seek) },
     };
     self.channel.response.write(.{
         .token = request.token,
@@ -55,4 +56,26 @@ pub fn read(self: *File, request: Request.Read) usize {
     const bytes_written = self.file.read(self.seek_offset, request.handle, request.offset, request.n);
     self.seek_offset += bytes_written;
     return bytes_written;
+}
+
+pub fn seek(self: *File, request: Request.Seek) isize {
+    switch (request.whence) {
+        .set => if (math.cast(usize, request.offset)) |offset| {
+            self.seek_offset = offset;
+        } else {
+            return -1;
+        },
+        .current => if (math.cast(usize, @as(isize, @intCast(self.seek_offset)) + request.offset)) |offset| {
+            self.seek_offset = offset;
+        } else {
+            return -1;
+        },
+        .end => if (math.cast(usize, @as(isize, @intCast(self.file.size)) - request.offset)) |offset| {
+            self.seek_offset = offset;
+        } else {
+            return -1;
+        },
+    }
+
+    return @intCast(self.seek_offset);
 }
