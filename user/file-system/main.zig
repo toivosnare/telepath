@@ -181,6 +181,22 @@ pub fn addClient(client: *Client) void {
     clients_len += 1;
 }
 
+pub fn removeClient(client: *Client) void {
+    if (client.prev) |prev| {
+        prev.next = client.next;
+    } else {
+        clients_head = client.next;
+    }
+    if (client.next) |next| {
+        next.prev = client.prev;
+    } else {
+        clients_tail = client.prev;
+    }
+    client.prev = null;
+    client.next = null;
+    clients_len -= 1;
+}
+
 pub fn panic(msg: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
     log.err("PANIC: {s}", .{msg});
     while (true) {}

@@ -8,12 +8,14 @@ const Client = @This();
 pub const Directory = @import("Client/Directory.zig");
 pub const File = @import("Client/File.zig");
 
-kind: union(enum) {
-    directory: Directory,
-    file: File,
-},
+kind: Kind,
 prev: ?*Client = null,
 next: ?*Client = null,
+
+pub const Kind = union(enum) {
+    directory: Directory,
+    file: File,
+};
 
 pub const Request = union(enum) {
     directory: Directory.Request,

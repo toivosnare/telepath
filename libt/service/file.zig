@@ -5,6 +5,7 @@ const Handle = libt.Handle;
 pub const Operation = enum(u8) {
     read = 0,
     seek = 1,
+    close = 2,
 };
 
 pub const Request = extern struct {
@@ -15,6 +16,7 @@ pub const Request = extern struct {
     pub const Payload = extern union {
         read: Read,
         seek: Seek,
+        close: Close,
     };
 
     pub const Read = extern struct {
@@ -31,6 +33,8 @@ pub const Request = extern struct {
             end = 2,
         },
     };
+
+    pub const Close = extern struct {};
 };
 
 pub const Response = extern struct {
@@ -41,10 +45,12 @@ pub const Response = extern struct {
     pub const Payload = extern union {
         read: Read,
         seek: Seek,
+        close: Close,
     };
 
     pub const Read = usize;
     pub const Seek = isize;
+    pub const Close = void;
 };
 
 const channel_capacity = 8;

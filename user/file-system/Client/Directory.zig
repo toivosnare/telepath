@@ -45,6 +45,7 @@ pub fn handleRequest(self: *Directory, request: Request, allocator: Allocator) v
     const payload: Response.Payload = switch (request.op) {
         .read => .{ .read = self.read(request.payload.read) },
         .seek => .{ .seek = self.seek(request.payload.seek) },
+        .close => .{ .close = self.close(request.payload.close) },
         .open => .{ .open = if (self.open(request.payload.open, allocator)) true else |_| false },
     };
     self.channel.response.write(.{
@@ -52,6 +53,11 @@ pub fn handleRequest(self: *Directory, request: Request, allocator: Allocator) v
         .op = request.op,
         .payload = payload,
     });
+
+    if (request.op == .close) {
+        const client: *Client = @fieldParentPtr("kind", @as(*Client.Kind, @ptrCast(self)));
+        allocator.destroy(client);
+    }
 }
 
 pub fn read(self: *Directory, request: Request.Read) usize {
@@ -73,6 +79,12 @@ pub fn seek(self: *Directory, request: Request.Seek) isize {
     }
 
     return @intCast(self.seek_offset);
+}
+
+pub fn close(self: *Directory, request: Request.Close) void {
+    _ = request;
+    const client: *Client = @fieldParentPtr("kind", @as(*Client.Kind, @ptrCast(self)));
+    main.removeClient(client);
 }
 
 pub fn open(self: Directory, request: Request.Open, allocator: Allocator) !void {
