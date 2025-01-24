@@ -8,9 +8,9 @@ const libt = @import("libt");
 const syscall = libt.syscall;
 const WaitReason = syscall.WaitReason;
 const scache = @import("sector_cache.zig");
-const Sector = scache.Sector;
 const fcache = @import("file_cache.zig");
 const fat = @import("fat.zig");
+const Sector = fat.Sector;
 const Client = @import("Client.zig");
 const services = @import("services");
 
@@ -56,11 +56,9 @@ const MasterBootRecord = extern struct {
     pub const boot_signature: [2]u8 = .{ 0x55, 0xAA };
 
     comptime {
-        assert(@sizeOf(MasterBootRecord) == 512);
+        assert(@sizeOf(MasterBootRecord) == fat.sector_size);
     }
 };
-
-const sector_size = 512;
 
 pub fn main(args: []usize) !void {
     _ = args;
@@ -71,9 +69,9 @@ pub fn main(args: []usize) !void {
     }){};
     const allocator = gpa.allocator();
 
-    const sector_buf = try allocator.alloc(u8, sector_size);
+    const sector_buf = try allocator.alloc(u8, fat.sector_size);
 
-    try readSector(.mbr, @ptrCast(sector_buf.ptr));
+    try readSector(0, @ptrCast(sector_buf.ptr));
     const mbr: *const MasterBootRecord = @ptrCast(sector_buf.ptr);
     if (!mem.eql(u8, &mbr.boot_signature, &MasterBootRecord.boot_signature)) {
         try writer.writeAll("Invalid MBR boot signature.\n");
@@ -88,7 +86,7 @@ pub fn main(args: []usize) !void {
         return error.NoValidPartition;
     };
 
-    const vbr_sector: Sector = @enumFromInt(partition.lba_first);
+    const vbr_sector: Sector = partition.lba_first;
     try readSector(vbr_sector, @ptrCast(sector_buf.ptr));
     const root_directory_sector = fat.init(vbr_sector, @ptrCast(sector_buf.ptr));
     allocator.free(sector_buf);
@@ -115,10 +113,10 @@ pub fn main(args: []usize) !void {
     scache.loop();
 }
 
-fn readSector(sector: Sector, buf: *[sector_size]u8) !void {
+fn readSector(sector: Sector, buf: *[fat.sector_size]u8) !void {
     const physical_address = try syscall.processTranslate(.self, buf);
     services.block.request.write(.{
-        .sector_index = @intFromEnum(sector),
+        .sector_index = sector,
         .address = @intFromPtr(physical_address),
         .write = false,
         .token = 0,

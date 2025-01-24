@@ -3,8 +3,11 @@ const assert = std.debug.assert;
 const math = std.math;
 const mem = std.mem;
 const unicode = std.unicode;
-const scache = @import("sector_cache.zig");
-const Sector = scache.Sector;
+
+pub const Sector = usize;
+pub const sector_size = 512;
+pub const invalid_sector = math.maxInt(Sector);
+pub const Cluster = usize;
 
 const VolumeBootRecord = extern struct {
     jump: [3]u8,
@@ -113,18 +116,18 @@ var first_data_sector: Sector = undefined;
 
 pub fn init(vbr_sector: Sector, vbr: *const VolumeBootRecord) Sector {
     sectors_per_cluster = vbr.sectors_per_cluster;
-    fat_sector = @enumFromInt(@intFromEnum(vbr_sector) + vbr.reserved_sectors);
-    const root_directory_sector: Sector = @enumFromInt(@intFromEnum(fat_sector) + vbr.file_allocation_tables * vbr.sectors_per_fat);
-    const root_directory_sectors = math.divCeil(usize, vbr.root_directory_entries * @sizeOf(DirectoryEntry), 512) catch unreachable;
-    first_data_sector = @enumFromInt(@intFromEnum(root_directory_sector) + root_directory_sectors);
+    fat_sector = vbr_sector + vbr.reserved_sectors;
+    const root_directory_sector = fat_sector + vbr.file_allocation_tables * vbr.sectors_per_fat;
+    const root_directory_sectors = math.divCeil(usize, vbr.root_directory_entries * @sizeOf(DirectoryEntry), sector_size) catch unreachable;
+    first_data_sector = root_directory_sector + root_directory_sectors;
 
     return root_directory_sector;
 }
 
-pub fn sectorFromCluster(cluster: usize) Sector {
-    return @enumFromInt(@intFromEnum(first_data_sector) + (cluster - 2) * sectors_per_cluster);
+pub fn sectorFromCluster(cluster: Cluster) Sector {
+    return first_data_sector + (cluster - 2) * sectors_per_cluster;
 }
 
-pub fn clusterFromSector(sector: Sector) usize {
-    return ((@intFromEnum(sector) - @intFromEnum(first_data_sector)) / sectors_per_cluster) + 2;
+pub fn clusterFromSector(sector: Sector) Cluster {
+    return ((sector - first_data_sector) / sectors_per_cluster) + 2;
 }

@@ -4,6 +4,8 @@ const math = std.math;
 const libt = @import("libt");
 const syscall = libt.syscall;
 const Spinlock = libt.sync.Spinlock;
+const fat = @import("fat.zig");
+const Sector = fat.Sector;
 const services = @import("services");
 const block = services.block;
 
@@ -19,17 +21,9 @@ var lru_list_tail: ?*Entry = null;
 var entries: [entry_count]Entry = undefined;
 var entries_physical_base: usize = undefined;
 
-pub const Sector = enum(usize) {
-    mbr = 0,
-    invalid = math.maxInt(usize),
-    _,
-
-    pub const size = 512;
-};
-
 pub const Entry = struct {
     sector: Sector,
-    data: [Sector.size]u8,
+    data: [fat.sector_size]u8,
     state: State,
     ref_count: u8,
     hash_chain_next: ?*Entry,
@@ -55,7 +49,7 @@ pub const Entry = struct {
     }
 
     pub fn removeFromHashChain(self: *Entry) void {
-        const bucket = &hash_buckets[@intFromEnum(self.sector) & hash_mask];
+        const bucket = &hash_buckets[self.sector & hash_mask];
         var prev_entry: ?*Entry = null;
         var entry = bucket.*;
         while (entry) |e| {
@@ -104,7 +98,7 @@ pub fn init() void {
 
     var prev: ?*Entry = null;
     for (&entries) |*entry| {
-        entry.sector = .invalid;
+        entry.sector = fat.invalid_sector;
         entry.state = .clean;
         entry.ref_count = 0;
         entry.hash_chain_next = null;
@@ -125,7 +119,7 @@ pub fn init() void {
 pub fn get(sector: Sector) *Entry {
     lock.lock();
 
-    const bucket = &hash_buckets[@intFromEnum(sector) & hash_mask];
+    const bucket = &hash_buckets[sector & hash_mask];
     var entry = bucket.*;
     while (entry) |e| : (entry = e.hash_chain_next) {
         if (e.sector == sector) {
@@ -162,7 +156,7 @@ pub fn get(sector: Sector) *Entry {
     lock.unlock();
 
     block.request.write(.{
-        .sector_index = @intFromEnum(sector),
+        .sector_index = sector,
         .address = physical_address,
         .write = false,
         .token = @intFromPtr(evided_entry),

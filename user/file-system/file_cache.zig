@@ -8,15 +8,15 @@ const Handle = libt.Handle;
 const service = libt.service;
 const Spinlock = libt.sync.Spinlock;
 const scache = @import("sector_cache.zig");
-const Sector = scache.Sector;
 const fat = @import("fat.zig");
+const Sector = fat.Sector;
 
 pub const Entry = struct {
     lock: Spinlock = .{},
     short_name: [short_name_length]u8 = undefined,
     long_name: []u8 = &.{},
-    parent_start_sector: Sector = .invalid,
-    start_sector: Sector = 0,
+    parent_start_sector: Sector = fat.invalid_sector,
+    start_sector: Sector = fat.invalid_sector,
     size: usize = 0,
     ref_count: usize = 0,
     kind: enum { regular, directory } = .regular,
@@ -129,7 +129,7 @@ pub const Entry = struct {
     }
 
     fn sectorHashBucket(start_sector: Sector) *Bucket {
-        return &sector_hash_buckets[@intFromEnum(start_sector) & sector_hash_mask];
+        return &sector_hash_buckets[start_sector & sector_hash_mask];
     }
 
     fn getBySector(start_sector: Sector, sector_hash_bucket: *Bucket) ?*Entry {
@@ -241,7 +241,7 @@ pub const Entry = struct {
 
     pub fn logicalSectorToPhysical(self: Entry, logical_sector: usize) Sector {
         if (self.isRootDirectory())
-            return @enumFromInt(@intFromEnum(self.start_sector) + logical_sector);
+            return self.start_sector + logical_sector;
 
         var logical_cluster = logical_sector / fat.sectors_per_cluster;
         const cluster = fat.clusterFromSector(self.start_sector);
@@ -251,7 +251,7 @@ pub const Entry = struct {
             logical_cluster -= 1;
         }
 
-        return @enumFromInt(@intFromEnum(fat.sectorFromCluster(cluster)) + (logical_sector % fat.sectors_per_cluster));
+        return fat.sectorFromCluster(cluster) + (logical_sector % fat.sectors_per_cluster);
     }
 
     pub fn read(self: Entry, start_seek_offset: usize, region_handle: Handle, region_offset: usize, n: usize) usize {
@@ -263,12 +263,12 @@ pub const Entry = struct {
         var seek_offset = start_seek_offset;
 
         while (bytes_written < bytes_to_write) {
-            const sector = self.logicalSectorToPhysical(seek_offset / Sector.size);
+            const sector = self.logicalSectorToPhysical(seek_offset / fat.sector_size);
             const sentry = scache.get(sector);
             defer scache.put(sentry);
 
-            const size = @min(n - bytes_written, Sector.size - seek_offset % Sector.size);
-            const from = @intFromPtr(&sentry.data) + (seek_offset % Sector.size);
+            const size = @min(n - bytes_written, fat.sector_size - seek_offset % fat.sector_size);
+            const from = @intFromPtr(&sentry.data) + (seek_offset % fat.sector_size);
             syscall.regionWrite(.self, region_handle, @ptrFromInt(from), region_offset + bytes_written, size) catch break;
             bytes_written += size;
             seek_offset += size;
@@ -341,7 +341,7 @@ pub const Entry = struct {
 
         pub fn init(entry: *Entry, seek_offset: usize) DirectoryIterator {
             const aligned_seek_offset = mem.alignForward(usize, seek_offset, @sizeOf(fat.DirectoryEntry));
-            const logical_sector_index = aligned_seek_offset / Sector.size;
+            const logical_sector_index = aligned_seek_offset / fat.sector_size;
             const physical_sector = entry.logicalSectorToPhysical(logical_sector_index);
             const sentry = scache.get(physical_sector);
             return .{
@@ -358,7 +358,7 @@ pub const Entry = struct {
 
             while (true) {
                 defer self.advance();
-                const directory_entry: *fat.DirectoryEntry = @alignCast(@ptrCast(&self.sentry.data[self.seek_offset % Sector.size]));
+                const directory_entry: *fat.DirectoryEntry = @alignCast(@ptrCast(&self.sentry.data[self.seek_offset % fat.sector_size]));
 
                 if (directory_entry.normal.name[0] == 0)
                     return null;
@@ -432,7 +432,7 @@ pub const Entry = struct {
 
         fn advance(self: *DirectoryIterator) void {
             self.seek_offset += @sizeOf(fat.DirectoryEntry);
-            const logical_sector_index = self.seek_offset / Sector.size;
+            const logical_sector_index = self.seek_offset / fat.sector_size;
             if (logical_sector_index == self.logical_sector_index)
                 return;
 
