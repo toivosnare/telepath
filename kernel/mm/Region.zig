@@ -112,6 +112,21 @@ pub fn index(self: *const Region) Index {
     return (@intFromPtr(self) - @intFromPtr(&table[0])) / @sizeOf(Region);
 }
 
+pub fn read(self: *Region, to: UserVirtualAddress, offset: usize, length: usize) !void {
+    if (offset + length > self.sizeInBytes())
+        return error.InvalidParameter;
+    if (to > mm.user_virtual_end)
+        return error.InvalidParameter;
+    if (to + length > mm.user_virtual_end)
+        return error.InvalidParameter;
+
+    var dest: []u8 = undefined;
+    dest.ptr = @ptrFromInt(to);
+    dest.len = length;
+    const source = mm.logicalFromPhysical(mem.asBytes(self.allocation).ptr) + offset;
+    @memcpy(dest, source);
+}
+
 pub fn write(self: *Region, from: UserVirtualAddress, offset: usize, length: usize) !void {
     if (offset + length > self.sizeInBytes())
         return error.InvalidParameter;

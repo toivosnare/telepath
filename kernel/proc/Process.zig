@@ -468,6 +468,15 @@ pub fn unmapRegion(self: *Process, virtual_address: UserVirtualAddress) !Handle 
     return region_capability.toHandle();
 }
 
+pub fn readRegion(self: *Process, target_region_handle: Handle, to: UserVirtualAddress, offset: usize, length: usize) !void {
+    self.lock.lock();
+    defer self.lock.unlock();
+
+    const target_region_capability = try Capability.get(target_region_handle, self);
+    const target_region = try target_region_capability.region();
+    try target_region.read(to, offset, length);
+}
+
 pub fn writeRegion(self: *Process, target_region_handle: Handle, from: UserVirtualAddress, offset: usize, length: usize) !void {
     self.lock.lock();
     defer self.lock.unlock();
