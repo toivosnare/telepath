@@ -224,6 +224,14 @@ fn ls(
             entry.name[0..entry.name_length],
         });
     }
+
+    directory.request.write(.{
+        .token = 0,
+        .op = .close,
+        .payload = .{ .close = .{} },
+    });
+    const directory_response = directory.response.read();
+    assert(directory_response.token == 0);
 }
 
 fn cat(
@@ -290,6 +298,14 @@ fn cat(
     bytes.ptr = @ptrCast(buf_ptr);
     bytes.len = bytes_read;
     try writer.writeAll(bytes);
+
+    file.request.write(.{
+        .token = 0,
+        .op = .close,
+        .payload = .{ .close = .{} },
+    });
+    const file_response = file.response.read();
+    assert(file_response.token == 0);
 }
 
 fn hexdump(bytes: []const u8, writer: anytype) !void {
