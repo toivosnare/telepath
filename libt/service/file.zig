@@ -4,8 +4,9 @@ const Handle = libt.Handle;
 
 pub const Operation = enum(u8) {
     read = 0,
-    seek = 1,
-    close = 2,
+    write = 1,
+    seek = 2,
+    close = 3,
 };
 
 pub const Request = extern struct {
@@ -15,11 +16,18 @@ pub const Request = extern struct {
 
     pub const Payload = extern union {
         read: Read,
+        write: Write,
         seek: Seek,
         close: Close,
     };
 
     pub const Read = extern struct {
+        handle: Handle,
+        offset: usize,
+        n: usize,
+    };
+
+    pub const Write = extern struct {
         handle: Handle,
         offset: usize,
         n: usize,
@@ -44,11 +52,13 @@ pub const Response = extern struct {
 
     pub const Payload = extern union {
         read: Read,
+        write: Write,
         seek: Seek,
         close: Close,
     };
 
     pub const Read = usize;
+    pub const Write = usize;
     pub const Seek = isize;
     pub const Close = void;
 };

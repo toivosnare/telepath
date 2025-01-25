@@ -270,11 +270,33 @@ pub const Entry = struct {
             const size = @min(n - bytes_written, fat.sector_size - seek_offset % fat.sector_size);
             const from = @intFromPtr(&sentry.data) + (seek_offset % fat.sector_size);
             syscall.regionWrite(.self, region_handle, @ptrFromInt(from), region_offset + bytes_written, size) catch break;
+
             bytes_written += size;
             seek_offset += size;
         }
 
         return bytes_written;
+    }
+
+    pub fn write(self: Entry, start_seek_offset: usize, region_handle: Handle, region_offset: usize, n: usize) usize {
+        var bytes_read: usize = 0;
+        var seek_offset = start_seek_offset;
+
+        while (bytes_read < n) {
+            const sector = self.logicalSectorToPhysical(seek_offset / fat.sector_size);
+            const sentry = scache.get(sector);
+            defer scache.put(sentry);
+
+            const size = @min(n - bytes_read, fat.sector_size - seek_offset % fat.sector_size);
+            const to = @intFromPtr(&sentry.data) + (seek_offset % fat.sector_size);
+            syscall.regionRead(.self, region_handle, @ptrFromInt(to), region_offset + bytes_read, size) catch break;
+            sentry.state = .dirty;
+
+            bytes_read += size;
+            seek_offset += size;
+        }
+
+        return bytes_read;
     }
 
     pub fn readdir(self: *Entry, seek_offset: *usize, region_handle: Handle, region_offset: usize, n: usize) usize {

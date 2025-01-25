@@ -43,6 +43,7 @@ pub fn hasRequest(self: File, request_out: *Client.Request, wait_reason: ?*WaitR
 pub fn handleRequest(self: *File, request: Request, allocator: Allocator) void {
     const payload: Response.Payload = switch (request.op) {
         .read => .{ .read = self.read(request.payload.read) },
+        .write => .{ .write = self.write(request.payload.write) },
         .seek => .{ .seek = self.seek(request.payload.seek) },
         .close => .{ .close = self.close(request.payload.close) },
     };
@@ -62,6 +63,12 @@ pub fn read(self: *File, request: Request.Read) usize {
     const bytes_written = self.file.read(self.seek_offset, request.handle, request.offset, request.n);
     self.seek_offset += bytes_written;
     return bytes_written;
+}
+
+pub fn write(self: *File, request: Request.Write) usize {
+    const bytes_read = self.file.write(self.seek_offset, request.handle, request.offset, request.n);
+    self.seek_offset += bytes_read;
+    return bytes_read;
 }
 
 pub fn seek(self: *File, request: Request.Seek) isize {
