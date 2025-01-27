@@ -62,12 +62,14 @@ fn switchContext(current_thread: ?*Thread, next_thread: *Thread, hart_index: Har
     next_thread.state = .running;
     next_thread.context.hart_index = hart_index;
 
-    riscv.satp.write(.{
-        .ppn = @bitCast(PhysicalPageNumber.fromPageTable(next_thread.process.page_table)),
-        .asid = 0,
-        .mode = .sv39,
-    });
-    riscv.@"sfence.vma"(null, null);
+    if (current_thread == null or current_thread.?.process != next_thread.process) {
+        riscv.satp.write(.{
+            .ppn = @bitCast(PhysicalPageNumber.fromPageTable(next_thread.process.page_table)),
+            .asid = 0,
+            .mode = .sv39,
+        });
+        riscv.@"sfence.vma"(null, null);
+    }
     next_thread.waitCopyResult();
 
     next_thread.lock.unlock();
