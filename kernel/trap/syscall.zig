@@ -148,8 +148,20 @@ pub fn regionWrite(thread: *Thread) RegionWriteError!usize {
     return 0;
 }
 
+pub const RegionRefCountError = syscall.RegionRefCountError;
+pub fn regionRefCount(thread: *Thread) RegionRefCountError!usize {
+    log.debug("regionRefCount", .{});
+    const owner_process_handle = handleFromUsize(thread.context.a1);
+    const target_region_handle = handleFromUsize(thread.context.a2);
+    const calling_process = thread.process;
+
+    const owner_process = try getProcess(calling_process, owner_process_handle);
+    return owner_process.refCountRegion(target_region_handle);
+}
+
 pub const RegionSizeError = syscall.RegionSizeError;
 pub fn regionSize(thread: *Thread) RegionSizeError!usize {
+    log.debug("regionSize", .{});
     const owner_process_handle = handleFromUsize(thread.context.a1);
     const target_region_handle = handleFromUsize(thread.context.a2);
     const calling_process = thread.process;

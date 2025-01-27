@@ -486,6 +486,15 @@ pub fn writeRegion(self: *Process, target_region_handle: Handle, from: UserVirtu
     try target_region.write(from, offset, length);
 }
 
+pub fn refCountRegion(self: *Process, target_region_handle: Handle) !usize {
+    self.lock.lock();
+    defer self.lock.unlock();
+
+    const target_region_capability = try Capability.get(target_region_handle, self);
+    const target_region = try target_region_capability.region();
+    return target_region.ref_count;
+}
+
 pub fn sizeRegion(self: *Process, target_region_handle: Handle) !usize {
     self.lock.lock();
     defer self.lock.unlock();

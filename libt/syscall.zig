@@ -85,6 +85,11 @@ pub fn regionWrite(owner_process: Handle, target_region: Handle, from: *const an
     return unpackResult(RegionWriteError!void, syscall5(.region_write, @intFromEnum(owner_process), @intFromEnum(target_region), @intFromPtr(from), offset, length));
 }
 
+pub const RegionRefCountError = error{ InvalidParameter, NoPermission, InvalidType };
+pub fn regionRefCount(owner_process: Handle, target_region: Handle) RegionRefCountError!usize {
+    return unpackResult(RegionRefCountError!usize, syscall2(.region_ref_count, @intFromEnum(owner_process), @intFromEnum(target_region)));
+}
+
 pub const RegionSizeError = error{ InvalidParameter, NoPermission, InvalidType };
 pub fn regionSize(owner_process: Handle, target_region: Handle) RegionSizeError!usize {
     return unpackResult(RegionSizeError!usize, syscall2(.region_size, @intFromEnum(owner_process), @intFromEnum(target_region)));
@@ -184,6 +189,7 @@ pub const Error = ProcessAllocateError
     || RegionUnmapError
     || RegionReadError
     || RegionWriteError
+    || RegionRefCountError
     || RegionSizeError
     || ThreadAllocateError
     || ThreadFreeError
