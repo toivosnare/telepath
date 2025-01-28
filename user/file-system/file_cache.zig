@@ -468,6 +468,12 @@ pub const Entry = struct {
         if (short_name_len < short_name_capacity)
             self.short_name[short_name_len] = 0;
     }
+
+    pub fn stat(self: *Entry, region_handle: Handle, region_offset: usize) !void {
+        var directory_entry: service.file_system.DirectoryEntry = undefined;
+        self.toDirectoryEntry(&directory_entry);
+        try syscall.regionWrite(.self, region_handle, &directory_entry, region_offset, @sizeOf(service.file_system.DirectoryEntry));
+    }
 };
 
 const Bucket = ?*Entry;

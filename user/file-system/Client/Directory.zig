@@ -47,6 +47,7 @@ pub fn handleRequest(self: *Directory, request: Request, allocator: Allocator) v
         .seek => .{ .seek = self.seek(request.payload.seek) },
         .close => .{ .close = self.close(request.payload.close) },
         .open => .{ .open = if (self.open(request.payload.open, allocator)) true else |_| false },
+        .stat => .{ .stat = if (self.stat(request.payload.stat)) true else |_| false },
     };
     self.channel.response.write(.{
         .token = request.token,
@@ -123,4 +124,17 @@ pub fn open(self: Directory, request: Request.Open, allocator: Allocator) !void 
             .file = entry,
         } } };
     main.addClient(new_client);
+}
+
+pub fn stat(self: Directory, request: Request.Stat) !void {
+    if (request.path_offset + request.path_length > service.file_system.buffer_capacity)
+        return error.InvalidParameter;
+    if (request.path_length == 0)
+        return error.InvalidParameter;
+    const path = self.channel.buffer[request.path_offset..][0..request.path_length];
+
+    const fentry = try self.root_directory.lookup(path);
+    defer fentry.unref();
+
+    try fentry.stat(request.region_handle, request.region_offset);
 }
