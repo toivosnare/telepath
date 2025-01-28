@@ -27,6 +27,7 @@ pub fn build(b: *Build) void {
     b.installArtifact(elf2tix);
 
     const elf2tix_cmd = b.addRunArtifact(elf2tix);
+    elf2tix_cmd.max_stdio_size *= 2;
     elf2tix_cmd.addFileArg(init_elf.getEmittedBin());
     const init_tix = elf2tix_cmd.captureStdOut();
     const init_tix_install = b.addInstallBinFile(init_tix, "init.tix");
