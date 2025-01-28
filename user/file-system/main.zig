@@ -91,7 +91,7 @@ pub fn main(args: []usize) !void {
     const root_directory_sector = fat.init(vbr_sector, @ptrCast(sector_buf.ptr));
     allocator.free(sector_buf);
 
-    const root_fcache_entry = fcache.init(root_directory_sector);
+    const root_fcache_entry = fcache.init(root_directory_sector, allocator);
     const root_client = try allocator.create(Client);
     root_client.* = .{ .kind = .{ .directory = .{
         .channel = services.client,

@@ -124,10 +124,14 @@ pub fn init(vbr_sector: Sector, vbr: *const VolumeBootRecord) Sector {
     return root_directory_sector;
 }
 
-pub fn sectorFromCluster(cluster: Cluster) Sector {
+pub fn sectorFromCluster(cluster: Cluster) ?Sector {
+    if (cluster < 2)
+        return null;
     return first_data_sector + (cluster - 2) * sectors_per_cluster;
 }
 
-pub fn clusterFromSector(sector: Sector) Cluster {
+pub fn clusterFromSector(sector: Sector) ?Cluster {
+    if (sector < first_data_sector)
+        return null;
     return ((sector - first_data_sector) / sectors_per_cluster) + 2;
 }

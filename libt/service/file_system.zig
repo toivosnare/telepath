@@ -75,15 +75,15 @@ pub const DirectoryEntry = extern struct {
     size: u32,
 
     pub const name_capacity = 64;
+};
 
-    pub const DateTime = extern struct {
-        year: u16,
-        month: u8,
-        day: u8,
-        hours: u8,
-        minutes: u8,
-        seconds: u8,
-    };
+pub const DateTime = extern struct {
+    year: u16,
+    month: u8,
+    day: u8,
+    hours: u8,
+    minutes: u8,
+    seconds: u8,
 };
 
 const channel_capacity = 8;
