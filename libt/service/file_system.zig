@@ -8,6 +8,7 @@ pub const Operation = enum(u8) {
     close = 3,
     open = 4,
     stat = 5,
+    sync = 6,
 };
 
 pub const Request = extern struct {
@@ -21,6 +22,7 @@ pub const Request = extern struct {
         close: Close,
         open: Open,
         stat: Stat,
+        sync: Sync,
     };
 
     pub const Read = extern struct {
@@ -51,6 +53,8 @@ pub const Request = extern struct {
         region_handle: Handle,
         region_offset: usize,
     };
+
+    pub const Sync = extern struct {};
 };
 
 pub const Response = extern struct {
@@ -64,6 +68,7 @@ pub const Response = extern struct {
         close: Close,
         open: Open,
         stat: Stat,
+        sync: Sync,
     };
 
     pub const Read = usize;
@@ -71,6 +76,7 @@ pub const Response = extern struct {
     pub const Close = void;
     pub const Open = bool;
     pub const Stat = bool;
+    pub const Sync = void;
 };
 
 pub const DirectoryEntry = extern struct {

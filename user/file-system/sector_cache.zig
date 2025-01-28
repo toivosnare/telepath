@@ -35,6 +35,7 @@ pub const Entry = struct {
         dirty,
         fetching1,
         fetching2,
+        syncing,
     };
 
     pub fn removeFromLruList(self: *Entry) void {
@@ -91,7 +92,7 @@ pub const Entry = struct {
         return result;
     }
 
-    pub fn dataPhysicalAddress(self: *Entry) usize {
+    pub fn dataPhysicalAddress(self: *const Entry) usize {
         return @intFromPtr(self) - @intFromPtr(&entries) + entries_physical_base + @offsetOf(Entry, "data");
     }
 };
@@ -134,7 +135,7 @@ pub fn get(sector: Sector) *Entry {
         e.removeFromLruList();
 
         var state = e.state;
-        while (state != .clean and state != .dirty) : (state = e.state) {
+        while (state == .fetching1 or state == .fetching2) : (state = e.state) {
             lock.unlock();
             libt.waitFutex(@ptrCast(&e.state), @intFromEnum(state), math.maxInt(usize)) catch @panic("wait error");
             lock.lock();
@@ -192,6 +193,23 @@ pub fn put(entry: *Entry) void {
     entry.addToLruList();
 }
 
+pub fn sync() void {
+    lock.lock();
+    defer lock.unlock();
+
+    for (&entries) |*entry| {
+        if (entry.state == .dirty) {
+            entry.state = .syncing;
+            block.request.write(.{
+                .sector_index = entry.sector,
+                .address = entry.dataPhysicalAddress(),
+                .write = true,
+                .token = @intFromPtr(entry),
+            });
+        }
+    }
+}
+
 pub fn loop() noreturn {
     while (true) {
         const response = block.response.read();
@@ -199,9 +217,11 @@ pub fn loop() noreturn {
         lock.lock();
         const entry: *Entry = @ptrFromInt(response.token);
         switch (entry.state) {
+            .clean => @panic("block op on clean entry"),
+            .dirty => {},
             .fetching1 => entry.state = .fetching2,
             .fetching2 => entry.state = .clean,
-            else => @panic("???"),
+            .syncing => entry.state = .clean,
         }
         lock.unlock();
 

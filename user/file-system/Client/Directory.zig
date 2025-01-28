@@ -8,6 +8,7 @@ const service = libt.service;
 const WaitReason = syscall.WaitReason;
 const main = @import("../main.zig");
 const fcache = @import("../file_cache.zig");
+const scache = @import("../sector_cache.zig");
 const Client = @import("../Client.zig");
 const Directory = @This();
 
@@ -48,6 +49,7 @@ pub fn handleRequest(self: *Directory, request: Request, allocator: Allocator) v
         .close => .{ .close = self.close(request.payload.close) },
         .open => .{ .open = if (self.open(request.payload.open, allocator)) true else |_| false },
         .stat => .{ .stat = if (self.stat(request.payload.stat)) true else |_| false },
+        .sync => .{ .sync = self.sync(request.payload.sync) },
     };
     self.channel.response.write(.{
         .token = request.token,
@@ -137,4 +139,10 @@ fn stat(self: Directory, request: Request.Stat) !void {
     defer fentry.unref();
 
     try fentry.stat(request.region_handle, request.region_offset);
+}
+
+fn sync(self: Directory, request: Request.Sync) void {
+    _ = self;
+    _ = request;
+    scache.sync();
 }
