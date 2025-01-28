@@ -59,19 +59,19 @@ pub fn handleRequest(self: *File, request: Request, allocator: Allocator) void {
     }
 }
 
-pub fn read(self: *File, request: Request.Read) usize {
+fn read(self: *File, request: Request.Read) usize {
     const bytes_written = self.file.read(self.seek_offset, request.handle, request.offset, request.n);
     self.seek_offset += bytes_written;
     return bytes_written;
 }
 
-pub fn write(self: *File, request: Request.Write) usize {
+fn write(self: *File, request: Request.Write) usize {
     const bytes_read = self.file.write(self.seek_offset, request.handle, request.offset, request.n);
     self.seek_offset += bytes_read;
     return bytes_read;
 }
 
-pub fn seek(self: *File, request: Request.Seek) isize {
+fn seek(self: *File, request: Request.Seek) isize {
     switch (request.whence) {
         .set => if (math.cast(usize, request.offset)) |offset| {
             self.seek_offset = offset;
@@ -93,7 +93,7 @@ pub fn seek(self: *File, request: Request.Seek) isize {
     return @intCast(self.seek_offset);
 }
 
-pub fn close(self: *File, request: Request.Close) void {
+fn close(self: *File, request: Request.Close) void {
     _ = request;
     const client: *Client = @fieldParentPtr("kind", @as(*Client.Kind, @ptrCast(self)));
     main.removeClient(client);

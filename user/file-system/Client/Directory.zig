@@ -61,11 +61,11 @@ pub fn handleRequest(self: *Directory, request: Request, allocator: Allocator) v
     }
 }
 
-pub fn read(self: *Directory, request: Request.Read) usize {
+fn read(self: *Directory, request: Request.Read) usize {
     return self.root_directory.readdir(&self.seek_offset, request.handle, request.offset, request.n);
 }
 
-pub fn seek(self: *Directory, request: Request.Seek) isize {
+fn seek(self: *Directory, request: Request.Seek) isize {
     switch (request.whence) {
         .set => if (math.cast(usize, request.offset)) |offset| {
             self.seek_offset = offset;
@@ -82,13 +82,13 @@ pub fn seek(self: *Directory, request: Request.Seek) isize {
     return @intCast(self.seek_offset);
 }
 
-pub fn close(self: *Directory, request: Request.Close) void {
+fn close(self: *Directory, request: Request.Close) void {
     _ = request;
     const client: *Client = @fieldParentPtr("kind", @as(*Client.Kind, @ptrCast(self)));
     main.removeClient(client);
 }
 
-pub fn open(self: Directory, request: Request.Open, allocator: Allocator) !void {
+fn open(self: Directory, request: Request.Open, allocator: Allocator) !void {
     errdefer syscall.regionFree(.self, request.handle) catch {};
 
     if (request.path_offset + request.path_length > service.file_system.buffer_capacity)
@@ -126,7 +126,7 @@ pub fn open(self: Directory, request: Request.Open, allocator: Allocator) !void 
     main.addClient(new_client);
 }
 
-pub fn stat(self: Directory, request: Request.Stat) !void {
+fn stat(self: Directory, request: Request.Stat) !void {
     if (request.path_offset + request.path_length > service.file_system.buffer_capacity)
         return error.InvalidParameter;
     if (request.path_length == 0)
