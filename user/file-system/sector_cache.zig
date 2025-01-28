@@ -33,7 +33,8 @@ pub const Entry = struct {
     pub const State = enum(u32) {
         clean,
         dirty,
-        fetching,
+        fetching1,
+        fetching2,
     };
 
     pub fn removeFromLruList(self: *Entry) void {
@@ -89,6 +90,10 @@ pub const Entry = struct {
         result.lru_list_prev = null;
         return result;
     }
+
+    pub fn dataPhysicalAddress(self: *Entry) usize {
+        return @intFromPtr(self) - @intFromPtr(&entries) + entries_physical_base + @offsetOf(Entry, "data");
+    }
 };
 
 pub fn init() void {
@@ -122,38 +127,49 @@ pub fn get(sector: Sector) *Entry {
     const bucket = &hash_buckets[sector & hash_mask];
     var entry = bucket.*;
     while (entry) |e| : (entry = e.hash_chain_next) {
-        if (e.sector == sector) {
-            e.ref_count += 1;
+        if (e.sector != sector)
+            continue;
 
-            if (e.state == .fetching) {
-                lock.unlock();
-                libt.waitFutex(@ptrCast(&e.state), @intFromEnum(Entry.State.fetching), math.maxInt(usize)) catch @panic("wait error");
-            } else {
-                e.removeFromLruList();
-                lock.unlock();
-            }
-            return e;
+        e.ref_count += 1;
+        e.removeFromLruList();
+
+        var state = e.state;
+        while (state != .clean and state != .dirty) : (state = e.state) {
+            lock.unlock();
+            libt.waitFutex(@ptrCast(&e.state), @intFromEnum(state), math.maxInt(usize)) catch @panic("wait error");
+            lock.lock();
         }
+
+        lock.unlock();
+        return e;
     }
 
     const evided_entry = Entry.popLruList();
+    const physical_address = evided_entry.dataPhysicalAddress();
     evided_entry.removeFromHashChain();
-
-    const physical_address = @intFromPtr(evided_entry) - @intFromPtr(&entries) + entries_physical_base + @offsetOf(Entry, "data");
-
-    if (evided_entry.state == .dirty) {
-        @panic("dirty");
-    }
-
+    const evided_sector = evided_entry.sector;
     evided_entry.sector = sector;
-    evided_entry.state = .fetching;
     evided_entry.ref_count = 1;
 
     // Add to hash chain.
     evided_entry.hash_chain_next = bucket.*;
     bucket.* = evided_entry;
 
-    lock.unlock();
+    if (evided_entry.state == .dirty) {
+        evided_entry.state = .fetching1;
+        lock.unlock();
+
+        block.request.write(.{
+            .sector_index = evided_sector,
+            .address = physical_address,
+            .write = true,
+            .token = @intFromPtr(evided_entry),
+        });
+        libt.waitFutex(@ptrCast(&evided_entry.state), @intFromEnum(Entry.State.fetching1), math.maxInt(usize)) catch @panic("wait error");
+    } else {
+        evided_entry.state = .fetching2;
+        lock.unlock();
+    }
 
     block.request.write(.{
         .sector_index = sector,
@@ -161,7 +177,7 @@ pub fn get(sector: Sector) *Entry {
         .write = false,
         .token = @intFromPtr(evided_entry),
     });
-    libt.waitFutex(@ptrCast(&evided_entry.state), @intFromEnum(Entry.State.fetching), math.maxInt(usize)) catch @panic("wait error");
+    libt.waitFutex(@ptrCast(&evided_entry.state), @intFromEnum(Entry.State.fetching2), math.maxInt(usize)) catch @panic("wait error");
 
     return evided_entry;
 }
@@ -182,7 +198,11 @@ pub fn loop() noreturn {
 
         lock.lock();
         const entry: *Entry = @ptrFromInt(response.token);
-        entry.state = .clean;
+        switch (entry.state) {
+            .fetching1 => entry.state = .fetching2,
+            .fetching2 => entry.state = .clean,
+            else => @panic("???"),
+        }
         lock.unlock();
 
         _ = syscall.wake(@ptrCast(&entry.state), math.maxInt(usize)) catch @panic("wake error");
