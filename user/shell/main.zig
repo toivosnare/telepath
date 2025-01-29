@@ -83,6 +83,8 @@ pub fn main(args: []usize) !void {
             try ls(&it, writer, file_system, file_system_handle, shared_buf_handle, buf_ptr);
         } else if (mem.eql(u8, verb, "cat")) {
             try cat(&it, writer, file_system, file_system_handle, shared_buf_handle, buf_ptr);
+        } else if (mem.eql(u8, verb, "sync")) {
+            try sync(&it, writer, file_system);
         } else if (mem.eql(u8, verb, "exit")) {
             break;
         } else {
@@ -316,6 +318,23 @@ fn cat(
     });
     const file_response = file.response.read();
     assert(file_response.token == 0);
+}
+
+fn sync(
+    it: *mem.SplitIterator(u8, .scalar),
+    writer: anytype,
+    file_system: *FileSystem,
+) !void {
+    _ = it;
+    _ = writer;
+
+    file_system.request.write(.{
+        .token = 0,
+        .op = .sync,
+        .payload = .{ .sync = .{} },
+    });
+    const response = file_system.response.read();
+    assert(response.token == 0);
 }
 
 fn hexdump(bytes: []const u8, writer: anytype) !void {
