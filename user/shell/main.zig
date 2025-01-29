@@ -20,6 +20,7 @@ pub fn main(args: []usize) !void {
     const serial_driver = services.serial_driver;
     const writer = serial_driver.tx.writer();
     const reader = serial_driver.rx.reader();
+    const rtc_driver = services.rtc_driver;
     const block_driver = services.block_driver;
     const file_system = services.file_system;
 
@@ -42,7 +43,16 @@ pub fn main(args: []usize) !void {
     var command_stream = io.fixedBufferStream(&command);
     var command_writer = command_stream.writer();
 
-    try writer.writeAll("Telepath shell\n");
+    const dt = rtc_driver.currentDateTime();
+    try writer.writeAll("Telepath shell\nCurrent time is ");
+    try writer.print("{:0>4}-{:0>2}-{:0>2}T{d:0>2}:{d:0>2}:{d:0>2}.\n", .{
+        dt.year,
+        dt.month,
+        dt.day,
+        dt.hours,
+        dt.minutes,
+        dt.seconds,
+    });
     while (true) {
         defer command_stream.reset();
 

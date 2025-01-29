@@ -12,6 +12,9 @@
         .@"smp-test" = .{
             .path = "../smp-test",
         },
+        .@"goldfish-rtc" = .{
+            .path = "../goldfish-rtc",
+        },
         .@"virtio-blk" = .{
             .path = "../virtio-blk",
         },

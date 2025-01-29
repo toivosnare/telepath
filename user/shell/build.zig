@@ -15,6 +15,7 @@ pub fn build(b: *std.Build) void {
         .{ .name = "serial_driver", .service = service.serial_driver },
         .{ .name = "block_driver", .service = service.block_driver },
         .{ .name = "file_system", .service = service.file_system },
+        .{ .name = "rtc_driver", .service = service.rtc_driver },
     });
 
     b.installArtifact(exe);

@@ -76,17 +76,17 @@ pub fn main() usize {
     const serial_elf = driver_map.get("ns16550a") orelse return 2;
     _ = loadElf(serial_elf, &service_map) catch return 3;
 
-    // const smp_test_elf = driver_map.get("smp-test") orelse return 4;
-    // _ = loadElf(smp_test_elf, &service_map) catch return 5;
+    const goldfish_rtc_elf = driver_map.get("goldfish-rtc") orelse return 4;
+    _ = loadElf(goldfish_rtc_elf, &service_map) catch return 5;
 
-    const virtio_blk_elf = driver_map.get("virtio-blk") orelse return 4;
-    _ = loadElf(virtio_blk_elf, &service_map) catch return 5;
+    const virtio_blk_elf = driver_map.get("virtio-blk") orelse return 6;
+    _ = loadElf(virtio_blk_elf, &service_map) catch return 7;
 
-    const file_system_elf = driver_map.get("file-system") orelse return 6;
-    _ = loadElf(file_system_elf, &service_map) catch return 7;
+    const file_system_elf = driver_map.get("file-system") orelse return 8;
+    _ = loadElf(file_system_elf, &service_map) catch return 9;
 
-    const shell_elf = driver_map.get("shell") orelse return 8;
-    _ = loadElf(shell_elf, &service_map) catch return 9;
+    const shell_elf = driver_map.get("shell") orelse return 10;
+    _ = loadElf(shell_elf, &service_map) catch return 11;
 
     libt.sleep(math.maxInt(usize)) catch unreachable;
     unreachable;

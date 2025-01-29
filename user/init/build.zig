@@ -13,7 +13,7 @@ pub fn build(b: *Build) void {
     const ns16550a = b.dependency("ns16550a", .{
         .optimize = optimize,
     });
-    const @"smp-test" = b.dependency("smp-test", .{
+    const @"goldfish-rtc" = b.dependency("goldfish-rtc", .{
         .optimize = optimize,
     });
     const @"virtio-blk" = b.dependency("virtio-blk", .{
@@ -28,7 +28,7 @@ pub fn build(b: *Build) void {
 
     const drivers = [_]*Step.Compile{
         ns16550a.artifact("ns16550a"),
-        @"smp-test".artifact("smp-test"),
+        @"goldfish-rtc".artifact("goldfish-rtc"),
         @"virtio-blk".artifact("virtio-blk"),
         @"file-system".artifact("file-system"),
         shell.artifact("shell"),
