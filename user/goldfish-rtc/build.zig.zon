@@ -1,0 +1,19 @@
+.{
+    .name = "goldfish-rtc",
+    .version = "0.0.0",
+    .minimum_zig_version = "0.11.0",
+    .dependencies = .{
+        .libt = .{
+            .path = "../../libt",
+        },
+        .@"zig-datetime" = .{
+            .url = "git+https://github.com/frmdstryr/zig-datetime.git#70aebf28fb3e137cd84123a9349d157a74708721",
+            .hash = "122077215ce36e125a490e59ec1748ffd4f6ba00d4d14f7308978e5360711d72d77f",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "main.zig",
+    },
+}

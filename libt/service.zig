@@ -9,6 +9,7 @@ const Mutex = libt.sync.Mutex;
 const Condvar = libt.sync.Condvar;
 
 pub const serial_driver = @import("service/serial_driver.zig");
+pub const rtc_driver = @import("service/rtc_driver.zig");
 pub const block_driver = @import("service/block_driver.zig");
 pub const file_system = @import("service/file_system.zig");
 pub const file = @import("service/file.zig");
