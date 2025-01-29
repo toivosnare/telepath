@@ -8,7 +8,7 @@ const libt = @import("libt");
 const syscall = libt.syscall;
 const Handle = libt.Handle;
 const BlockDriver = libt.service.block_driver.consume.Type;
-const FileSystem = libt.service.file_system.consume.Type;
+const Directory = libt.service.directory.consume.Type;
 const File = libt.service.file.consume.Type;
 const services = @import("services");
 
@@ -20,9 +20,9 @@ pub fn main(args: []usize) !void {
     const serial_driver = services.serial_driver;
     const writer = serial_driver.tx.writer();
     const reader = serial_driver.rx.reader();
-    const rtc_driver = services.rtc_driver;
     const block_driver = services.block_driver;
-    const file_system = services.file_system;
+    const root_directory = services.root_directory;
+    const rtc_driver = services.rtc_driver;
 
     const file_system_handle: Handle = @enumFromInt(args[2]);
     if (file_system_handle == .self) {
@@ -80,11 +80,11 @@ pub fn main(args: []usize) !void {
         } else if (mem.eql(u8, verb, "write")) {
             try write(&it, writer, block_driver);
         } else if (mem.eql(u8, verb, "ls")) {
-            try ls(&it, writer, file_system, file_system_handle, shared_buf_handle, buf_ptr);
+            try ls(&it, writer, root_directory, shared_buf_handle, buf_ptr, file_system_handle);
         } else if (mem.eql(u8, verb, "cat")) {
-            try cat(&it, writer, file_system, file_system_handle, shared_buf_handle, buf_ptr);
+            try cat(&it, writer, root_directory, shared_buf_handle, buf_ptr, file_system_handle);
         } else if (mem.eql(u8, verb, "sync")) {
-            try sync(&it, writer, file_system);
+            try sync(&it, writer, root_directory);
         } else if (mem.eql(u8, verb, "exit")) {
             break;
         } else {
@@ -160,22 +160,22 @@ fn write(it: *mem.SplitIterator(u8, .scalar), writer: anytype, block_driver: *Bl
 fn ls(
     it: *mem.SplitIterator(u8, .scalar),
     writer: anytype,
-    file_system: *FileSystem,
-    file_system_handle: Handle,
+    root_directory: *Directory,
     shared_buf_handle: Handle,
     buf_ptr: *align(mem.page_size) anyopaque,
+    file_system_handle: Handle,
 ) !void {
     const path = it.next() orelse "/";
-    const buffer: [*]u8 = @ptrCast(&file_system.buffer);
+    const buffer: [*]u8 = @ptrCast(&root_directory.buffer);
     @memcpy(buffer, path);
 
-    const channel_size_in_bytes = @sizeOf(FileSystem);
+    const channel_size_in_bytes = @sizeOf(Directory);
     const channel_size = math.divCeil(usize, channel_size_in_bytes, mem.page_size) catch unreachable;
     const channel_handle = try syscall.regionAllocate(.self, channel_size, .{ .read = true, .write = true }, null);
     defer syscall.regionFree(.self, channel_handle) catch {};
     const shared_channel_handle = try syscall.regionShare(.self, channel_handle, file_system_handle, .{ .read = true, .write = true });
 
-    file_system.request.write(.{
+    root_directory.request.write(.{
         .token = 0,
         .op = .open,
         .payload = .{ .open = .{
@@ -184,7 +184,7 @@ fn ls(
             .handle = shared_channel_handle,
         } },
     });
-    const response = file_system.response.read();
+    const response = root_directory.response.read();
     assert(response.token == 0);
 
     if (response.payload.open == false) {
@@ -192,11 +192,11 @@ fn ls(
         return;
     }
 
-    const directory: *FileSystem = @ptrCast(try syscall.regionMap(.self, channel_handle, null));
+    const directory: *Directory = @ptrCast(try syscall.regionMap(.self, channel_handle, null));
     defer _ = syscall.regionUnmap(.self, @alignCast(@ptrCast(directory))) catch {};
 
     var entries_read: usize = 0;
-    const DirectoryEntry = libt.service.file_system.DirectoryEntry;
+    const DirectoryEntry = libt.service.directory.Entry;
     while (true) {
         directory.request.write(.{
             .token = 0,
@@ -249,13 +249,13 @@ fn ls(
 fn cat(
     it: *mem.SplitIterator(u8, .scalar),
     writer: anytype,
-    file_system: *FileSystem,
-    file_system_handle: Handle,
+    root_directory: *Directory,
     shared_buf_handle: Handle,
     buf_ptr: *align(mem.page_size) anyopaque,
+    file_system_handle: Handle,
 ) !void {
     const path = it.next() orelse return;
-    const buffer: [*]u8 = @ptrCast(&file_system.buffer);
+    const buffer: [*]u8 = @ptrCast(&root_directory.buffer);
     @memcpy(buffer, path);
 
     const channel_size_in_bytes = @sizeOf(File);
@@ -266,7 +266,7 @@ fn cat(
 
     const shared_channel_handle = try syscall.regionShare(.self, channel_handle, file_system_handle, .{ .read = true, .write = true });
 
-    file_system.request.write(.{
+    root_directory.request.write(.{
         .token = 0,
         .op = .open,
         .payload = .{ .open = .{
@@ -275,7 +275,7 @@ fn cat(
             .handle = shared_channel_handle,
         } },
     });
-    const response = file_system.response.read();
+    const response = root_directory.response.read();
     assert(response.token == 0);
 
     if (response.payload.open == false) {
@@ -323,17 +323,17 @@ fn cat(
 fn sync(
     it: *mem.SplitIterator(u8, .scalar),
     writer: anytype,
-    file_system: *FileSystem,
+    root_directory: *Directory,
 ) !void {
     _ = it;
     _ = writer;
 
-    file_system.request.write(.{
+    root_directory.request.write(.{
         .token = 0,
         .op = .sync,
         .payload = .{ .sync = .{} },
     });
-    const response = file_system.response.read();
+    const response = root_directory.response.read();
     assert(response.token == 0);
 }
 

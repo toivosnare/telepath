@@ -12,12 +12,12 @@ const scache = @import("../sector_cache.zig");
 const Client = @import("../Client.zig");
 const Directory = @This();
 
-channel: *service.file_system.provide.Type,
+channel: *service.directory.provide.Type,
 root_directory: *fcache.Entry,
 seek_offset: usize = 0,
 
-pub const Request = service.file_system.Request;
-pub const Response = service.file_system.Response;
+pub const Request = service.directory.Request;
+pub const Response = service.directory.Response;
 
 pub fn hasRequest(self: Directory, request_out: *Client.Request, wait_reason: ?*WaitReason) bool {
     const request_channel = &self.channel.request;
@@ -93,7 +93,7 @@ fn close(self: *Directory, request: Request.Close) void {
 fn open(self: Directory, request: Request.Open, allocator: Allocator) !void {
     errdefer syscall.regionFree(.self, request.handle) catch {};
 
-    if (request.path_offset + request.path_length > service.file_system.buffer_capacity)
+    if (request.path_offset + request.path_length > service.directory.buffer_capacity)
         return error.InvalidParameter;
     if (request.path_length == 0)
         return error.InvalidParameter;
@@ -103,7 +103,7 @@ fn open(self: Directory, request: Request.Open, allocator: Allocator) !void {
     errdefer entry.unref();
 
     const channel_size_in_bytes: usize = if (entry.kind == .directory)
-        @sizeOf(service.file_system.provide.Type)
+        @sizeOf(service.directory.provide.Type)
     else
         @sizeOf(service.file.provide.Type);
     const channel_size = math.divCeil(usize, channel_size_in_bytes, mem.page_size) catch unreachable;
@@ -129,7 +129,7 @@ fn open(self: Directory, request: Request.Open, allocator: Allocator) !void {
 }
 
 fn stat(self: Directory, request: Request.Stat) !void {
-    if (request.path_offset + request.path_length > service.file_system.buffer_capacity)
+    if (request.path_offset + request.path_length > service.directory.buffer_capacity)
         return error.InvalidParameter;
     if (request.path_length == 0)
         return error.InvalidParameter;

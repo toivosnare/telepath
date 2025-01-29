@@ -80,7 +80,7 @@ pub const Response = extern struct {
     pub const Sync = void;
 };
 
-pub const DirectoryEntry = extern struct {
+pub const Entry = extern struct {
     name: [name_capacity]u8,
     name_length: u8,
     flags: packed struct(u8) {

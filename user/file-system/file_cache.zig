@@ -267,13 +267,13 @@ pub const Entry = struct {
 
     pub fn readdir(self: *Entry, seek_offset: *usize, region_handle: Handle, region_offset: usize, n: usize) usize {
         const region_size = syscall.regionSize(.self, region_handle) catch return 0;
-        if (region_size * mem.page_size < (region_offset + n) * @sizeOf(service.file_system.DirectoryEntry))
+        if (region_size * mem.page_size < (region_offset + n) * @sizeOf(service.directory.Entry))
             return 0;
 
         const region_ptr = syscall.regionMap(.self, region_handle, null) catch return 0;
         defer _ = syscall.regionUnmap(.self, region_ptr) catch {};
 
-        const directory_entries_start: [*]service.file_system.DirectoryEntry = @ptrCast(region_ptr);
+        const directory_entries_start: [*]service.directory.Entry = @ptrCast(region_ptr);
         const directory_entries = directory_entries_start[region_offset .. region_offset + n];
 
         var entries_read: usize = 0;
@@ -285,7 +285,7 @@ pub const Entry = struct {
         return entries_read;
     }
 
-    fn toDirectoryEntry(self: *Entry, directory_entry: *service.file_system.DirectoryEntry) void {
+    fn toDirectoryEntry(self: *Entry, directory_entry: *service.directory.Entry) void {
         const name = self.getName();
         @memcpy(directory_entry.name[0..name.len], name);
         directory_entry.name_length = @intCast(name.len);
@@ -470,9 +470,9 @@ pub const Entry = struct {
     }
 
     pub fn stat(self: *Entry, region_handle: Handle, region_offset: usize) !void {
-        var directory_entry: service.file_system.DirectoryEntry = undefined;
+        var directory_entry: service.directory.Entry = undefined;
         self.toDirectoryEntry(&directory_entry);
-        try syscall.regionWrite(.self, region_handle, &directory_entry, region_offset, @sizeOf(service.file_system.DirectoryEntry));
+        try syscall.regionWrite(.self, region_handle, &directory_entry, region_offset, @sizeOf(service.directory.Entry));
     }
 };
 
