@@ -1,6 +1,14 @@
+const std = @import("std");
+const assert = std.debug.assert;
 const libt = @import("../root.zig");
 const Channel = libt.service.Channel;
 const Handle = libt.Handle;
+
+pub const Whence = enum(u8) {
+    set = 0,
+    current = 1,
+    end = 2,
+};
 
 pub const Operation = enum(u8) {
     read = 0,
@@ -35,11 +43,7 @@ pub const Request = extern struct {
 
     pub const Seek = extern struct {
         offset: isize,
-        whence: enum(u8) {
-            set = 0,
-            current = 1,
-            end = 2,
-        },
+        whence: Whence,
     };
 
     pub const Close = extern struct {};
@@ -77,6 +81,60 @@ pub const consume = struct {
     pub const Type = extern struct {
         request: Channel(Request, channel_capacity, .transmit) = .{},
         response: Channel(Response, channel_capacity, .receive) = .{},
+
+        pub fn read(self: *@This(), handle: Handle, offset: usize, n: usize) usize {
+            self.request.write(.{
+                .token = 0,
+                .op = .read,
+                .payload = .{ .read = .{
+                    .handle = handle,
+                    .offset = offset,
+                    .n = n,
+                } },
+            });
+            const response = self.response.read();
+            assert(response.token == 0);
+            return response.payload.read;
+        }
+
+        pub fn write(self: *@This(), handle: Handle, offset: usize, n: usize) usize {
+            self.request.write(.{
+                .token = 0,
+                .op = .write,
+                .payload = .{ .write = .{
+                    .handle = handle,
+                    .offset = offset,
+                    .n = n,
+                } },
+            });
+            const response = self.response.read();
+            assert(response.token == 0);
+            return response.payload.write;
+        }
+
+        pub fn seek(self: *@This(), offset: isize, whence: Whence) isize {
+            self.request.write(.{
+                .token = 0,
+                .op = .seek,
+                .payload = .{ .seek = .{
+                    .offset = offset,
+                    .whence = whence,
+                } },
+            });
+            const response = self.response.read();
+            assert(response.token == 0);
+            return response.payload.seek;
+        }
+
+        pub fn close(self: *@This()) void {
+            self.request.write(.{
+                .token = 0,
+                .op = .close,
+                .payload = .{ .close = .{} },
+            });
+            const response = self.response.read();
+            assert(response.token == 0);
+        }
     };
     pub const write = true;
 };

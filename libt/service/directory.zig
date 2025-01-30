@@ -1,7 +1,14 @@
+const std = @import("std");
+const assert = std.debug.assert;
 const libt = @import("../root.zig");
 const DateTime = libt.service.rtc_driver.DateTime;
 const Channel = libt.service.Channel;
 const Handle = libt.Handle;
+
+pub const Whence = enum(u8) {
+    set = 0,
+    current = 1,
+};
 
 pub const Operation = enum(u8) {
     read = 0,
@@ -34,10 +41,7 @@ pub const Request = extern struct {
 
     pub const Seek = extern struct {
         offset: isize,
-        whence: enum(u8) {
-            set = 0,
-            current = 1,
-        },
+        whence: Whence,
     };
 
     pub const Close = extern struct {};
@@ -112,6 +116,88 @@ pub const consume = struct {
         request: Channel(Request, channel_capacity, .transmit) = .{},
         response: Channel(Response, channel_capacity, .receive) = .{},
         buffer: [buffer_capacity]u8 = undefined,
+
+        pub fn read(self: *@This(), handle: Handle, offset: usize, n: usize) usize {
+            self.request.write(.{
+                .token = 0,
+                .op = .read,
+                .payload = .{ .read = .{
+                    .handle = handle,
+                    .offset = offset,
+                    .n = n,
+                } },
+            });
+            const response = self.response.read();
+            assert(response.token == 0);
+            return response.payload.read;
+        }
+
+        pub fn seek(self: *@This(), offset: isize, whence: Whence) isize {
+            self.request.write(.{
+                .token = 0,
+                .op = .seek,
+                .payload = .{ .seek = .{
+                    .offset = offset,
+                    .whence = whence,
+                } },
+            });
+            const response = self.response.read();
+            assert(response.token == 0);
+            return response.payload.seek;
+        }
+
+        pub fn close(self: *@This()) void {
+            self.request.write(.{
+                .token = 0,
+                .op = .close,
+                .payload = .{ .close = .{} },
+            });
+            const response = self.response.read();
+            assert(response.token == 0);
+        }
+
+        pub fn open(self: *@This(), path: []const u8, handle: Handle) bool {
+            @memcpy(self.buffer[0..path.len], path);
+            self.request.write(.{
+                .token = 0,
+                .op = .open,
+                .payload = .{ .open = .{
+                    .path_offset = 0,
+                    .path_length = path.len,
+                    .handle = handle,
+                } },
+            });
+            const response = self.response.read();
+            assert(response.token == 0);
+            return response.payload.open;
+        }
+
+        pub fn stat(self: *@This(), path: []const u8, handle: Handle, offset: usize) bool {
+            @memcpy(self.buffer[0..path.len], path);
+            self.request.write(.{
+                .token = 0,
+                .op = .stat,
+                .payload = .{ .stat = .{
+                    .path_offset = 0,
+                    .path_length = path.len,
+                    .region_handle = handle,
+                    .region_offset = offset,
+                } },
+            });
+            const response = self.response.read();
+            assert(response.token == 0);
+            return response.payload.stat;
+        }
+
+        pub fn sync(self: *@This()) void {
+            self.request.write(.{
+                .token = 0,
+                .op = .sync,
+                .payload = .{ .sync = .{} },
+            });
+            const response = self.response.read();
+            assert(response.token == 0);
+        }
     };
     pub const write = true;
 };
