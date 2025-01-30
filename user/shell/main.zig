@@ -165,52 +165,27 @@ fn ls(
     buf_ptr: *align(mem.page_size) anyopaque,
     file_system_handle: Handle,
 ) !void {
-    const path = it.next() orelse "/";
-    const buffer: [*]u8 = @ptrCast(&root_directory.buffer);
-    @memcpy(buffer, path);
-
     const channel_size_in_bytes = @sizeOf(Directory);
     const channel_size = math.divCeil(usize, channel_size_in_bytes, mem.page_size) catch unreachable;
     const channel_handle = try syscall.regionAllocate(.self, channel_size, .{ .read = true, .write = true }, null);
     defer syscall.regionFree(.self, channel_handle) catch {};
     const shared_channel_handle = try syscall.regionShare(.self, channel_handle, file_system_handle, .{ .read = true, .write = true });
 
-    root_directory.request.write(.{
-        .token = 0,
-        .op = .open,
-        .payload = .{ .open = .{
-            .path_offset = 0,
-            .path_length = path.len,
-            .handle = shared_channel_handle,
-        } },
-    });
-    const response = root_directory.response.read();
-    assert(response.token == 0);
-
-    if (response.payload.open == false) {
+    const path = it.next() orelse "/";
+    if (!root_directory.open(path, shared_channel_handle)) {
         try writer.writeAll("Error\n");
         return;
     }
 
     const directory: *Directory = @ptrCast(try syscall.regionMap(.self, channel_handle, null));
     defer _ = syscall.regionUnmap(.self, @alignCast(@ptrCast(directory))) catch {};
+    defer directory.close();
 
     var entries_read: usize = 0;
     const DirectoryEntry = libt.service.directory.Entry;
     while (true) {
-        directory.request.write(.{
-            .token = 0,
-            .op = .read,
-            .payload = .{ .read = .{
-                .handle = shared_buf_handle,
-                .offset = entries_read,
-                .n = mem.page_size / @sizeOf(DirectoryEntry),
-            } },
-        });
-        const directory_response = directory.response.read();
-        assert(directory_response.token == 0);
-        const n = directory_response.payload.read;
-
+        const entries_to_read = mem.page_size / @sizeOf(DirectoryEntry) - entries_read;
+        const n = directory.read(shared_buf_handle, entries_read, entries_to_read);
         if (n == 0)
             break;
         entries_read += n;
@@ -236,14 +211,6 @@ fn ls(
             entry.name[0..entry.name_length],
         });
     }
-
-    directory.request.write(.{
-        .token = 0,
-        .op = .close,
-        .payload = .{ .close = .{} },
-    });
-    const directory_response = directory.response.read();
-    assert(directory_response.token == 0);
 }
 
 fn cat(
@@ -254,53 +221,26 @@ fn cat(
     buf_ptr: *align(mem.page_size) anyopaque,
     file_system_handle: Handle,
 ) !void {
-    const path = it.next() orelse return;
-    const buffer: [*]u8 = @ptrCast(&root_directory.buffer);
-    @memcpy(buffer, path);
-
     const channel_size_in_bytes = @sizeOf(File);
     const channel_size = math.divCeil(usize, channel_size_in_bytes, mem.page_size) catch unreachable;
-
     const channel_handle = try syscall.regionAllocate(.self, channel_size, .{ .read = true, .write = true }, null);
     defer syscall.regionFree(.self, channel_handle) catch {};
-
     const shared_channel_handle = try syscall.regionShare(.self, channel_handle, file_system_handle, .{ .read = true, .write = true });
 
-    root_directory.request.write(.{
-        .token = 0,
-        .op = .open,
-        .payload = .{ .open = .{
-            .path_offset = 0,
-            .path_length = path.len,
-            .handle = shared_channel_handle,
-        } },
-    });
-    const response = root_directory.response.read();
-    assert(response.token == 0);
-
-    if (response.payload.open == false) {
+    const path = it.next() orelse return;
+    if (!root_directory.open(path, shared_channel_handle)) {
         try writer.writeAll("Error\n");
         return;
     }
 
     const file: *File = @ptrCast(try syscall.regionMap(.self, channel_handle, null));
     defer _ = syscall.regionUnmap(.self, @alignCast(@ptrCast(file))) catch {};
+    defer file.close();
 
     var bytes_read: usize = 0;
     while (true) {
-        file.request.write(.{
-            .token = 0,
-            .op = .read,
-            .payload = .{ .read = .{
-                .handle = shared_buf_handle,
-                .offset = bytes_read,
-                .n = mem.page_size,
-            } },
-        });
-        const file_response = file.response.read();
-        assert(file_response.token == 0);
-        const n = file_response.payload.read;
-
+        const bytes_to_read = mem.page_size - bytes_read;
+        const n = file.read(shared_buf_handle, bytes_read, bytes_to_read);
         if (n == 0)
             break;
         bytes_read += n;
@@ -310,14 +250,6 @@ fn cat(
     bytes.ptr = @ptrCast(buf_ptr);
     bytes.len = bytes_read;
     try writer.writeAll(bytes);
-
-    file.request.write(.{
-        .token = 0,
-        .op = .close,
-        .payload = .{ .close = .{} },
-    });
-    const file_response = file.response.read();
-    assert(file_response.token == 0);
 }
 
 fn sync(
@@ -327,14 +259,7 @@ fn sync(
 ) !void {
     _ = it;
     _ = writer;
-
-    root_directory.request.write(.{
-        .token = 0,
-        .op = .sync,
-        .payload = .{ .sync = .{} },
-    });
-    const response = root_directory.response.read();
-    assert(response.token == 0);
+    root_directory.sync();
 }
 
 fn hexdump(bytes: []const u8, writer: anytype) !void {
