@@ -112,14 +112,16 @@ pub const DirectoryEntry = extern union {
 
 pub var sectors_per_cluster: u8 = undefined;
 var fat_sector: Sector = undefined;
+pub var root_directory_sector: Sector = undefined;
+pub var root_directory_size: usize = undefined;
 var first_data_sector: Sector = undefined;
 
 pub fn init(vbr_sector: Sector, vbr: *const VolumeBootRecord) Sector {
     sectors_per_cluster = vbr.sectors_per_cluster;
     fat_sector = vbr_sector + vbr.reserved_sectors;
-    const root_directory_sector = fat_sector + vbr.file_allocation_tables * vbr.sectors_per_fat;
-    const root_directory_sectors = math.divCeil(usize, vbr.root_directory_entries * @sizeOf(DirectoryEntry), sector_size) catch unreachable;
-    first_data_sector = root_directory_sector + root_directory_sectors;
+    root_directory_sector = fat_sector + vbr.file_allocation_tables * vbr.sectors_per_fat;
+    root_directory_size = math.divCeil(usize, vbr.root_directory_entries * @sizeOf(DirectoryEntry), sector_size) catch unreachable;
+    first_data_sector = root_directory_sector + root_directory_size;
 
     return root_directory_sector;
 }

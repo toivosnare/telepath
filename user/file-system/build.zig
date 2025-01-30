@@ -13,6 +13,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     }, &[_]libt.ServiceOptions{
         .{ .name = "serial", .service = service.serial_driver },
+        .{ .name = "rtc", .service = service.rtc_driver },
         .{ .name = "block", .service = service.block_driver },
         .{ .name = "client", .service = service.directory, .mode = .provide },
     });

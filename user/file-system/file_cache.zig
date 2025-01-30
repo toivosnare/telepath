@@ -1,4 +1,5 @@
 const std = @import("std");
+const assert = std.debug.assert;
 const mem = std.mem;
 const unicode = std.unicode;
 const Wyhash = std.hash.Wyhash;
@@ -8,26 +9,29 @@ const Handle = libt.Handle;
 const service = libt.service;
 const DateTime = service.rtc_driver.DateTime;
 const Spinlock = libt.sync.Spinlock;
+const services = @import("services");
+const rtc = services.rtc;
 const scache = @import("sector_cache.zig");
 const fat = @import("fat.zig");
 const Sector = fat.Sector;
 
 pub const Entry = struct {
-    lock: Spinlock = .{},
-    short_name: [short_name_capacity]u8 = undefined,
-    long_name: []u8 = &.{},
-    parent_start_sector: Sector = fat.invalid_sector,
-    start_sector: ?Sector = fat.invalid_sector,
-    size: usize = 0,
-    ref_count: usize = 0,
-    creation_date_time: DateTime,
-    access_date_time: DateTime,
-    modification_date_time: DateTime,
-    kind: enum { regular, directory } = .regular,
-    name_hash_next: ?*Entry = null,
-    sector_hash_next: ?*Entry = null,
-    lru_list_next: ?*Entry = null,
-    lru_list_prev: ?*Entry = null,
+    start_sector: ?Sector,
+    parent_start_sector: ?Sector,
+    parent_offset: usize,
+    short_name: [short_name_capacity]u8,
+    long_name: []u8,
+    kind: enum { regular, directory },
+    ref_count: usize,
+    size: usize,
+    creation_time: DateTime,
+    access_time: DateTime,
+    modification_time: DateTime,
+    name_hash_next: ?*Entry,
+    sector_hash_next: ?*Entry,
+    lru_list_next: ?*Entry,
+    lru_list_prev: ?*Entry,
+    // lock: Spinlock,
 
     const short_name_capacity = 16;
 
@@ -59,25 +63,13 @@ pub const Entry = struct {
             if (mem.eql(u8, path_part, ".."))
                 return error.InvalidParameter;
 
-            if (entry.getChildFast(path_part)) |e| {
-                entry = e;
-                continue;
-            }
-            entry = try entry.getChildSlow(path_part);
+            entry = entry.getChild(path_part) orelse return error.NotFound;
         }
 
         return entry;
     }
 
-    fn nameHashBucket(parent_start_sector: Sector, child_name: []const u8) *Bucket {
-        var hash_state = Wyhash.init(0);
-        hash_state.update(mem.asBytes(&parent_start_sector));
-        hash_state.update(child_name);
-        const hash = hash_state.final();
-        return &name_hash_buckets[hash % name_hash_bucket_count];
-    }
-
-    fn getChildFast(self: Entry, child_name: []const u8) ?*Entry {
+    fn getChild(self: *Entry, child_name: []const u8) ?*Entry {
         const name_hash_bucket = nameHashBucket(self.start_sector.?, child_name);
         var entry = name_hash_bucket.*;
         while (entry) |e| : (entry = e.name_hash_next) {
@@ -89,221 +81,21 @@ pub const Entry = struct {
             e.ref();
             return entry;
         }
-        return null;
-    }
 
-    fn getChildSlow(self: *Entry, child_name: []const u8) !*Entry {
         var seek_offset: usize = 0;
         while (self.getNextChild(&seek_offset)) |fentry| {
             if (mem.eql(u8, fentry.getName(), child_name))
                 return fentry;
             fentry.unref();
         }
-        return error.NotFound;
-    }
 
-    fn sectorHashBucket(start_sector: ?Sector) ?*Bucket {
-        if (start_sector == null)
-            return null;
-        return &sector_hash_buckets[start_sector.? & sector_hash_mask];
-    }
-
-    fn getBySector(start_sector: Sector, sector_hash_bucket: *Bucket) ?*Entry {
-        var entry = sector_hash_bucket.*;
-        while (entry) |e| : (entry = e.sector_hash_next) {
-            if (e.start_sector == start_sector) {
-                e.removeFromLruList();
-                e.ref();
-                return e;
-            }
-        }
         return null;
-    }
-
-    fn getName(self: *Entry) []const u8 {
-        const short_len = mem.indexOfScalar(u8, &self.short_name, 0) orelse self.short_name.len;
-        if (short_len == 0) {
-            return self.long_name;
-        } else {
-            return self.short_name[0..short_len];
-        }
-    }
-
-    pub fn popLruList() *Entry {
-        const result = lru_list_head orelse @panic("all cache elements in use");
-        lru_list_head = result.lru_list_next;
-        if (lru_list_head) |head|
-            head.lru_list_prev = null;
-        if (result == lru_list_tail)
-            lru_list_tail = null;
-
-        result.lru_list_next = null;
-        result.lru_list_prev = null;
-        return result;
-    }
-
-    fn removeFromLruList(self: *Entry) void {
-        if (self.lru_list_prev) |prev|
-            prev.lru_list_next = self.lru_list_next
-        else if (lru_list_head == self)
-            lru_list_head = self.lru_list_next;
-
-        if (self.lru_list_next) |next|
-            next.lru_list_prev = self.lru_list_prev
-        else if (lru_list_tail == self)
-            lru_list_tail = self.lru_list_prev;
-    }
-
-    fn addToLruList(self: *Entry) void {
-        if (lru_list_tail) |tail| {
-            tail.lru_list_next = self;
-        } else {
-            lru_list_head = self;
-        }
-        self.lru_list_prev = lru_list_tail;
-        self.lru_list_next = null;
-        lru_list_tail = self;
-    }
-
-    pub fn removeFromSectorHashChain(self: *Entry) void {
-        const bucket = sectorHashBucket(self.start_sector) orelse return;
-        var prev_entry: ?*Entry = null;
-        var entry = bucket.*;
-        while (entry) |e| {
-            if (e == self) {
-                if (prev_entry) |prev|
-                    prev.sector_hash_next = self.sector_hash_next
-                else
-                    bucket.* = self.sector_hash_next;
-                self.sector_hash_next = null;
-                return;
-            }
-            prev_entry = entry;
-            entry = e.sector_hash_next;
-        }
-    }
-
-    pub fn removeFromNameHashChain(self: *Entry) void {
-        const bucket = nameHashBucket(self.parent_start_sector, self.getName());
-        var prev_entry: ?*Entry = null;
-        var entry = bucket.*;
-        while (entry) |e| {
-            if (e == self) {
-                if (prev_entry) |prev|
-                    prev.name_hash_next = self.name_hash_next
-                else
-                    bucket.* = self.name_hash_next;
-                self.name_hash_next = null;
-                return;
-            }
-            prev_entry = entry;
-            entry = e.name_hash_next;
-        }
-    }
-
-    pub fn isRootDirectory(self: Entry) bool {
-        return self.start_sector == self.parent_start_sector;
-    }
-
-    pub fn logicalSectorToPhysical(self: Entry, logical_sector: usize) Sector {
-        if (self.isRootDirectory())
-            return self.start_sector.? + logical_sector;
-
-        var logical_cluster = logical_sector / fat.sectors_per_cluster;
-        const cluster = fat.clusterFromSector(self.start_sector.?).?;
-
-        while (logical_cluster > 0) {
-            // TODO: follow FAT chains.
-            logical_cluster -= 1;
-        }
-
-        return fat.sectorFromCluster(cluster).? + (logical_sector % fat.sectors_per_cluster);
-    }
-
-    pub fn read(self: Entry, start_seek_offset: usize, region_handle: Handle, region_offset: usize, n: usize) usize {
-        // TODO: check overflow.
-        if (start_seek_offset >= self.size)
-            return 0;
-        const bytes_to_write = @min(n, self.size - start_seek_offset);
-        var bytes_written: usize = 0;
-        var seek_offset = start_seek_offset;
-
-        while (bytes_written < bytes_to_write) {
-            const sector = self.logicalSectorToPhysical(seek_offset / fat.sector_size);
-            const sentry = scache.get(sector);
-            defer scache.put(sentry);
-
-            const size = @min(n - bytes_written, fat.sector_size - seek_offset % fat.sector_size);
-            const from = @intFromPtr(&sentry.data) + (seek_offset % fat.sector_size);
-            syscall.regionWrite(.self, region_handle, @ptrFromInt(from), region_offset + bytes_written, size) catch break;
-
-            bytes_written += size;
-            seek_offset += size;
-        }
-
-        return bytes_written;
-    }
-
-    pub fn write(self: Entry, start_seek_offset: usize, region_handle: Handle, region_offset: usize, n: usize) usize {
-        var bytes_read: usize = 0;
-        var seek_offset = start_seek_offset;
-
-        while (bytes_read < n) {
-            const sector = self.logicalSectorToPhysical(seek_offset / fat.sector_size);
-            const sentry = scache.get(sector);
-            defer scache.put(sentry);
-
-            const size = @min(n - bytes_read, fat.sector_size - seek_offset % fat.sector_size);
-            const to = @intFromPtr(&sentry.data) + (seek_offset % fat.sector_size);
-            syscall.regionRead(.self, region_handle, @ptrFromInt(to), region_offset + bytes_read, size) catch break;
-            sentry.state = .dirty;
-
-            bytes_read += size;
-            seek_offset += size;
-        }
-
-        return bytes_read;
-    }
-
-    pub fn readdir(self: *Entry, seek_offset: *usize, region_handle: Handle, region_offset: usize, n: usize) usize {
-        const region_size = syscall.regionSize(.self, region_handle) catch return 0;
-        if (region_size * mem.page_size < (region_offset + n) * @sizeOf(service.directory.Entry))
-            return 0;
-
-        const region_ptr = syscall.regionMap(.self, region_handle, null) catch return 0;
-        defer _ = syscall.regionUnmap(.self, region_ptr) catch {};
-
-        const directory_entries_start: [*]service.directory.Entry = @ptrCast(region_ptr);
-        const directory_entries = directory_entries_start[region_offset .. region_offset + n];
-
-        var entries_read: usize = 0;
-        for (directory_entries) |*directory_entry| {
-            const fentry = self.getNextChild(seek_offset) orelse break;
-            fentry.toDirectoryEntry(directory_entry);
-            entries_read += 1;
-        }
-        return entries_read;
-    }
-
-    fn toDirectoryEntry(self: *Entry, directory_entry: *service.directory.Entry) void {
-        const name = self.getName();
-        @memcpy(directory_entry.name[0..name.len], name);
-        directory_entry.name_length = @intCast(name.len);
-        directory_entry.flags.directory = self.kind == .directory;
-        @memcpy(mem.asBytes(&directory_entry.creation_time), mem.asBytes(&self.creation_date_time));
-        @memcpy(mem.asBytes(&directory_entry.access_time), mem.asBytes(&self.access_date_time));
-        @memcpy(mem.asBytes(&directory_entry.modification_time), mem.asBytes(&self.modification_date_time));
-        directory_entry.size = @intCast(self.size);
-    }
-
-    fn hasLongName(self: Entry) bool {
-        return self.short_name[0] == 0;
     }
 
     fn getNextChild(self: Entry, seek_offset: *usize) ?*Entry {
         seek_offset.* = mem.alignForward(usize, seek_offset.*, @sizeOf(fat.DirectoryEntry));
         var logical_sector = seek_offset.* / fat.sector_size;
-        var sentry = scache.get(self.logicalSectorToPhysical(logical_sector));
+        var sentry = scache.get(self.physicalFromLogical(logical_sector));
         defer scache.put(sentry);
 
         var lfn_buffer: [256]u16 = undefined;
@@ -320,7 +112,7 @@ pub const Entry = struct {
                 if (next_logical_sector != logical_sector) {
                     logical_sector = next_logical_sector;
                     const old_sentry = sentry;
-                    sentry = scache.get(self.logicalSectorToPhysical(logical_sector));
+                    sentry = scache.get(self.physicalFromLogical(logical_sector));
                     scache.put(old_sentry);
                 }
             }
@@ -339,25 +131,32 @@ pub const Entry = struct {
             const normal = &directory_entry.normal;
 
             const child_start_sector = fat.sectorFromCluster(normal.cluster_number_low);
-            const sector_hash_bucket = sectorHashBucket(child_start_sector);
             if (child_start_sector) |start_sector| {
-                if (getBySector(start_sector, sector_hash_bucket.?)) |child| {
+                if (getBySector(start_sector)) |child| {
+                    if (child.parent_start_sector) |parent_start_sector| {
+                        assert(parent_start_sector == self.start_sector);
+                        assert(child.parent_offset == seek_offset.*);
+                    } else {
+                        child.parent_start_sector = self.start_sector;
+                        child.parent_offset = seek_offset.*;
+                        child.setName(lfn_buffer[0..lfn_length], normal);
+                        child.ref();
+                        child.size = normal.size;
+                    }
                     return child;
                 }
             }
 
             const child = Entry.popLruList();
-            child.removeFromSectorHashChain();
-            child.removeFromNameHashChain();
-            if (child.hasLongName())
-                allocator.free(self.long_name);
-
-            child.setName(lfn_buffer[0..lfn_length], normal);
-            child.parent_start_sector = self.start_sector.?;
             child.start_sector = child_start_sector;
-            child.size = normal.size;
+            child.parent_start_sector = self.start_sector.?;
+            child.parent_offset = seek_offset.*;
+            child.setName(lfn_buffer[0..lfn_length], normal);
+            child.kind = if (normal.attributes.directory) .directory else .regular;
             child.ref_count = 1;
-            child.creation_date_time = .{
+            child.size = normal.size;
+
+            child.creation_time = .{
                 .year = @as(u16, 1980) + normal.creation_date.year,
                 .month = normal.creation_date.month,
                 .day = normal.creation_date.day,
@@ -366,9 +165,8 @@ pub const Entry = struct {
                 .seconds = @as(u8, 2) * normal.creation_time.second,
             };
             if (normal.creation_time_cs >= 100)
-                child.creation_date_time.seconds += 1;
-
-            child.access_date_time = .{
+                child.creation_time.seconds += 1;
+            child.access_time = .{
                 .year = @as(u16, 1980) + normal.access_date.year,
                 .month = normal.access_date.month,
                 .day = normal.access_date.day,
@@ -376,8 +174,7 @@ pub const Entry = struct {
                 .minutes = 0,
                 .seconds = 0,
             };
-
-            child.modification_date_time = .{
+            child.modification_time = .{
                 .year = @as(u16, 1980) + normal.modification_date.year,
                 .month = normal.modification_date.month,
                 .day = normal.modification_date.day,
@@ -385,7 +182,6 @@ pub const Entry = struct {
                 .minutes = normal.modification_time.minute,
                 .seconds = @as(u8, 2) * normal.modification_time.second,
             };
-            child.kind = if (normal.attributes.directory) .directory else .regular;
 
             // Prepend to name hash chain.
             const name_hash_bucket = nameHashBucket(self.start_sector.?, child.getName());
@@ -393,9 +189,10 @@ pub const Entry = struct {
             name_hash_bucket.* = child;
 
             // Prepend to sector hash chain.
-            if (child_start_sector) |_| {
-                child.sector_hash_next = sector_hash_bucket.?.*;
-                sector_hash_bucket.?.* = child;
+            if (child_start_sector) |css| {
+                const sector_hash_bucket = sectorHashBucket(css);
+                child.sector_hash_next = sector_hash_bucket.*;
+                sector_hash_bucket.* = child;
             }
 
             return child;
@@ -469,10 +266,283 @@ pub const Entry = struct {
             self.short_name[short_name_len] = 0;
     }
 
+    fn getName(self: *Entry) []const u8 {
+        const short_len = mem.indexOfScalar(u8, &self.short_name, 0) orelse self.short_name.len;
+        if (short_len == 0) {
+            return self.long_name;
+        } else {
+            return self.short_name[0..short_len];
+        }
+    }
+
+    fn getParent(self: Entry) ?*Entry {
+        if (self.parent_start_sector == null)
+            return null;
+        const parent_start_sector = self.parent_start_sector.?;
+
+        if (getBySector(parent_start_sector)) |parent|
+            return parent;
+
+        const parent = Entry.popLruList();
+        parent.start_sector = parent_start_sector;
+        parent.parent_start_sector = null;
+        parent.parent_offset = 0;
+        @memcpy(parent.short_name[0..1], "?");
+        parent.kind = .directory;
+        parent.ref_count = 1;
+        parent.size = 0;
+
+        const sector_hash_bucket = sectorHashBucket(parent_start_sector);
+        parent.sector_hash_next = sector_hash_bucket.*;
+        sector_hash_bucket.* = parent;
+
+        return parent;
+    }
+
+    fn getBySector(start_sector: Sector) ?*Entry {
+        const bucket = sectorHashBucket(start_sector);
+        var entry = bucket.*;
+        while (entry) |e| : (entry = e.sector_hash_next) {
+            if (e.start_sector == start_sector) {
+                e.removeFromLruList();
+                e.ref();
+                return e;
+            }
+        }
+        return null;
+    }
+
+    fn physicalFromLogical(self: Entry, logical_sector: usize) Sector {
+        if (self.isRootDirectory())
+            return self.start_sector.? + logical_sector;
+
+        var logical_cluster = logical_sector / fat.sectors_per_cluster;
+        const cluster = fat.clusterFromSector(self.start_sector.?).?;
+
+        while (logical_cluster > 0) {
+            // TODO: follow FAT chains.
+            logical_cluster -= 1;
+        }
+
+        return fat.sectorFromCluster(cluster).? + (logical_sector % fat.sectors_per_cluster);
+    }
+
+    fn isRootDirectory(self: Entry) bool {
+        return self.start_sector == fat.root_directory_sector;
+    }
+
+    fn hasLongName(self: Entry) bool {
+        return self.short_name[0] == 0;
+    }
+
+    pub fn read(self: *Entry, start_seek_offset: usize, region_handle: Handle, region_offset: usize, n: usize) usize {
+        // TODO: check overflow.
+        if (start_seek_offset >= self.size)
+            return 0;
+        const bytes_to_write = @min(n, self.size - start_seek_offset);
+        var bytes_written: usize = 0;
+        var seek_offset = start_seek_offset;
+
+        while (bytes_written < bytes_to_write) {
+            const sector = self.physicalFromLogical(seek_offset / fat.sector_size);
+            const sentry = scache.get(sector);
+            defer scache.put(sentry);
+
+            const size = @min(n - bytes_written, fat.sector_size - seek_offset % fat.sector_size);
+            const from = @intFromPtr(&sentry.data) + (seek_offset % fat.sector_size);
+            syscall.regionWrite(.self, region_handle, @ptrFromInt(from), region_offset + bytes_written, size) catch break;
+
+            bytes_written += size;
+            seek_offset += size;
+        }
+
+        self.access_time = rtc.currentDateTime();
+        self.flush();
+
+        return bytes_written;
+    }
+
+    pub fn write(self: *Entry, start_seek_offset: usize, region_handle: Handle, region_offset: usize, n: usize) usize {
+        var bytes_read: usize = 0;
+        var seek_offset = start_seek_offset;
+
+        while (bytes_read < n) {
+            const sector = self.physicalFromLogical(seek_offset / fat.sector_size);
+            const sentry = scache.get(sector);
+            defer scache.put(sentry);
+
+            const size = @min(n - bytes_read, fat.sector_size - seek_offset % fat.sector_size);
+            const to = @intFromPtr(&sentry.data) + (seek_offset % fat.sector_size);
+            syscall.regionRead(.self, region_handle, @ptrFromInt(to), region_offset + bytes_read, size) catch break;
+            sentry.state = .dirty;
+
+            bytes_read += size;
+            seek_offset += size;
+        }
+
+        if (seek_offset > self.size)
+            self.size = seek_offset;
+        self.modification_time = rtc.currentDateTime();
+        self.flush();
+
+        return bytes_read;
+    }
+
+    pub fn readdir(self: *Entry, seek_offset: *usize, region_handle: Handle, region_offset: usize, n: usize) usize {
+        const region_size = syscall.regionSize(.self, region_handle) catch return 0;
+        if (region_size * mem.page_size < (region_offset + n) * @sizeOf(service.directory.Entry))
+            return 0;
+
+        const region_ptr = syscall.regionMap(.self, region_handle, null) catch return 0;
+        defer _ = syscall.regionUnmap(.self, region_ptr) catch {};
+
+        const directory_entries_start: [*]service.directory.Entry = @ptrCast(region_ptr);
+        const directory_entries = directory_entries_start[region_offset .. region_offset + n];
+
+        var entries_read: usize = 0;
+        for (directory_entries) |*directory_entry| {
+            const fentry = self.getNextChild(seek_offset) orelse break;
+            fentry.toDirectoryEntry(directory_entry);
+            entries_read += 1;
+        }
+
+        self.access_time = rtc.currentDateTime();
+        self.flush();
+
+        return entries_read;
+    }
+
     pub fn stat(self: *Entry, region_handle: Handle, region_offset: usize) !void {
         var directory_entry: service.directory.Entry = undefined;
         self.toDirectoryEntry(&directory_entry);
         try syscall.regionWrite(.self, region_handle, &directory_entry, region_offset, @sizeOf(service.directory.Entry));
+    }
+
+    fn flush(self: Entry) void {
+        if (self.isRootDirectory())
+            return;
+
+        const parent = self.getParent() orelse @panic("no parent");
+        const sector = parent.physicalFromLogical(self.parent_offset / fat.sector_size);
+        const sentry = scache.get(sector);
+        defer scache.put(sentry);
+
+        const directory_entry: *fat.DirectoryEntry.Normal = @alignCast(@ptrCast(&sentry.data[self.parent_offset % fat.sector_size]));
+        directory_entry.access_date.year = @intCast(self.access_time.year - 1980);
+        directory_entry.access_date.month = @intCast(self.access_time.month);
+        directory_entry.access_date.day = @intCast(self.access_time.day);
+
+        directory_entry.modification_date.year = @intCast(self.modification_time.year - 1980);
+        directory_entry.modification_date.month = @intCast(self.modification_time.month);
+        directory_entry.modification_date.day = @intCast(self.modification_time.day);
+        directory_entry.modification_time.hour = @intCast(self.modification_time.hours);
+        directory_entry.modification_time.minute = @intCast(self.modification_time.minutes);
+        directory_entry.modification_time.second = @intCast(self.modification_time.seconds / 2);
+
+        directory_entry.size = @intCast(self.size);
+        sentry.state = .dirty;
+    }
+
+    fn toDirectoryEntry(self: *Entry, directory_entry: *service.directory.Entry) void {
+        const name = self.getName();
+        @memcpy(directory_entry.name[0..name.len], name);
+        directory_entry.name_length = @intCast(name.len);
+        directory_entry.flags.directory = self.kind == .directory;
+        @memcpy(mem.asBytes(&directory_entry.creation_time), mem.asBytes(&self.creation_time));
+        @memcpy(mem.asBytes(&directory_entry.access_time), mem.asBytes(&self.access_time));
+        @memcpy(mem.asBytes(&directory_entry.modification_time), mem.asBytes(&self.modification_time));
+        directory_entry.size = @intCast(self.size);
+    }
+
+    fn nameHashBucket(parent_start_sector: Sector, child_name: []const u8) *Bucket {
+        var hash_state = Wyhash.init(0);
+        hash_state.update(mem.asBytes(&parent_start_sector));
+        hash_state.update(child_name);
+        const hash = hash_state.final();
+        return &name_hash_buckets[hash % name_hash_bucket_count];
+    }
+
+    fn sectorHashBucket(start_sector: Sector) *Bucket {
+        return &sector_hash_buckets[start_sector & sector_hash_mask];
+    }
+
+    fn popLruList() *Entry {
+        const result = lru_list_head orelse @panic("all cache elements in use");
+        lru_list_head = result.lru_list_next;
+        if (lru_list_head) |head|
+            head.lru_list_prev = null;
+        if (result == lru_list_tail)
+            lru_list_tail = null;
+
+        result.lru_list_next = null;
+        result.lru_list_prev = null;
+        result.removeFromSectorHashChain();
+        result.removeFromNameHashChain();
+        if (result.hasLongName())
+            allocator.free(result.long_name);
+
+        return result;
+    }
+
+    fn removeFromLruList(self: *Entry) void {
+        if (self.lru_list_prev) |prev|
+            prev.lru_list_next = self.lru_list_next
+        else if (lru_list_head == self)
+            lru_list_head = self.lru_list_next;
+
+        if (self.lru_list_next) |next|
+            next.lru_list_prev = self.lru_list_prev
+        else if (lru_list_tail == self)
+            lru_list_tail = self.lru_list_prev;
+    }
+
+    fn addToLruList(self: *Entry) void {
+        if (lru_list_tail) |tail| {
+            tail.lru_list_next = self;
+        } else {
+            lru_list_head = self;
+        }
+        self.lru_list_prev = lru_list_tail;
+        self.lru_list_next = null;
+        lru_list_tail = self;
+    }
+
+    fn removeFromSectorHashChain(self: *Entry) void {
+        const start_sector = self.start_sector orelse return;
+        const bucket = sectorHashBucket(start_sector);
+        var prev_entry: ?*Entry = null;
+        var entry = bucket.*;
+        while (entry) |e| {
+            if (e == self) {
+                if (prev_entry) |prev|
+                    prev.sector_hash_next = self.sector_hash_next
+                else
+                    bucket.* = self.sector_hash_next;
+                self.sector_hash_next = null;
+                return;
+            }
+            prev_entry = entry;
+            entry = e.sector_hash_next;
+        }
+    }
+
+    fn removeFromNameHashChain(self: *Entry) void {
+        const parent_start_sector = self.parent_start_sector orelse return;
+        const bucket = nameHashBucket(parent_start_sector, self.getName());
+        var prev_entry: ?*Entry = null;
+        var entry = bucket.*;
+        while (entry) |e| {
+            if (e == self) {
+                if (prev_entry) |prev|
+                    prev.name_hash_next = self.name_hash_next
+                else
+                    bucket.* = self.name_hash_next;
+                self.name_hash_next = null;
+                return;
+            }
+            prev_entry = entry;
+            entry = e.name_hash_next;
+        }
     }
 };
 
@@ -509,8 +579,13 @@ pub fn init(root_start_sector: Sector, allocator_: mem.Allocator) *Entry {
 
     const root_entry = Entry.popLruList();
     root_entry.start_sector = root_start_sector;
-    root_entry.parent_start_sector = root_start_sector;
-    root_entry.ref_count = 1;
+    root_entry.parent_start_sector = null;
     root_entry.kind = .directory;
+    root_entry.ref_count = 1;
+
+    const sector_hash_bucket = Entry.sectorHashBucket(root_start_sector);
+    root_entry.sector_hash_next = null;
+    sector_hash_bucket.* = root_entry;
+
     return root_entry;
 }
