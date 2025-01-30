@@ -348,7 +348,7 @@ pub const Entry = struct {
             const sentry = scache.get(sector);
             defer scache.put(sentry);
 
-            const size = @min(n - bytes_written, fat.sector_size - seek_offset % fat.sector_size);
+            const size = @min(bytes_to_write - bytes_written, fat.sector_size - seek_offset % fat.sector_size);
             const from = @intFromPtr(&sentry.data) + (seek_offset % fat.sector_size);
             syscall.regionWrite(.self, region_handle, @ptrFromInt(from), region_offset + bytes_written, size) catch break;
 
