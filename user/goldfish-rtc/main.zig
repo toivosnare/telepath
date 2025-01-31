@@ -2,8 +2,9 @@ const std = @import("std");
 const datetime = @import("zig-datetime").datetime;
 const libt = @import("libt");
 const syscall = libt.syscall;
-const Request = libt.service.rtc_driver.Request;
-const Response = libt.service.rtc_driver.Response;
+const service = libt.service;
+const Channel = service.Channel;
+const RtcDriver = service.RtcDriver;
 const services = @import("services");
 
 comptime {
@@ -27,11 +28,16 @@ const GoldfishRtc = extern struct {
     }
 };
 
+const Client = extern struct {
+    request: Channel(RtcDriver.Request, RtcDriver.channel_capacity, .receive),
+    response: Channel(RtcDriver.Response, RtcDriver.channel_capacity, .transmit),
+};
+
 pub fn main(args: []usize) !void {
     _ = args;
 
     const serial_driver = services.serial_driver;
-    const client = services.client;
+    const client: *Client = @ptrCast(services.client);
     const writer = serial_driver.tx.writer();
     try writer.writeAll("Initializing goldfish-rtc driver.\n");
 
@@ -42,7 +48,7 @@ pub fn main(args: []usize) !void {
 
     while (true) {
         const request = client.request.read();
-        const payload: Response.Payload = switch (request.op) {
+        const payload: RtcDriver.Response.Payload = switch (request.op) {
             .timestamp => .{ .timestamp = timestamp(goldfish) },
             .date_time => .{ .date_time = dateTime(goldfish) },
         };
@@ -54,11 +60,11 @@ pub fn main(args: []usize) !void {
     }
 }
 
-fn timestamp(goldfish: *volatile GoldfishRtc) Response.Timestamp {
+fn timestamp(goldfish: *volatile GoldfishRtc) RtcDriver.Response.Timestamp {
     return goldfish.read();
 }
 
-fn dateTime(goldfish: *volatile GoldfishRtc) Response.DateTime {
+fn dateTime(goldfish: *volatile GoldfishRtc) RtcDriver.Response.DateTime {
     const time: isize = @intCast(goldfish.read() / std.time.ns_per_ms);
     const lib_date_time = datetime.Datetime.fromTimestamp(time);
     return .{

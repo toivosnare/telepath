@@ -7,9 +7,9 @@ const math = std.math;
 const libt = @import("libt");
 const syscall = libt.syscall;
 const Handle = libt.Handle;
-const BlockDriver = libt.service.block_driver.consume.Type;
-const Directory = libt.service.directory.consume.Type;
-const File = libt.service.file.consume.Type;
+const BlockDriver = libt.service.BlockDriver;
+const Directory = libt.service.Directory;
+const File = libt.service.File;
 const services = @import("services");
 
 comptime {
@@ -182,7 +182,7 @@ fn ls(
     defer directory.close();
 
     var entries_read: usize = 0;
-    const DirectoryEntry = libt.service.directory.Entry;
+    const DirectoryEntry = libt.service.Directory.Entry;
     while (true) {
         const entries_to_read = mem.page_size / @sizeOf(DirectoryEntry) - entries_read;
         const n = directory.read(shared_buf_handle, entries_read, entries_to_read);

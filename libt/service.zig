@@ -8,11 +8,11 @@ const libt = @import("root.zig");
 const Mutex = libt.sync.Mutex;
 const Condvar = libt.sync.Condvar;
 
-pub const serial_driver = @import("service/serial_driver.zig");
-pub const rtc_driver = @import("service/rtc_driver.zig");
-pub const block_driver = @import("service/block_driver.zig");
-pub const directory = @import("service/directory.zig");
-pub const file = @import("service/file.zig");
+pub const SerialDriver = @import("service/SerialDriver.zig");
+pub const RtcDriver = @import("service/RtcDriver.zig");
+pub const BlockDriver = @import("service/BlockDriver.zig");
+pub const Directory = @import("service/Directory.zig");
+pub const File = @import("service/File.zig");
 
 pub fn hash(comptime Service: type) u32 {
     var result: u32 = undefined;

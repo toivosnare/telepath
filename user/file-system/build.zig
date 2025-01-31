@@ -12,10 +12,10 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     }, &[_]libt.ServiceOptions{
-        .{ .name = "serial", .service = service.serial_driver },
-        .{ .name = "rtc", .service = service.rtc_driver },
-        .{ .name = "block", .service = service.block_driver },
-        .{ .name = "client", .service = service.directory, .mode = .provide },
+        .{ .name = "serial", .service = service.SerialDriver },
+        .{ .name = "rtc", .service = service.RtcDriver },
+        .{ .name = "block", .service = service.BlockDriver },
+        .{ .name = "client", .service = service.Directory, .mode = .provide },
     });
 
     b.installArtifact(exe);

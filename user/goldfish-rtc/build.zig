@@ -17,9 +17,9 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     }, &[_]libt.ServiceOptions{
-        .{ .name = "serial_driver", .service = service.serial_driver },
-        .{ .name = "client", .service = service.rtc_driver, .mode = .provide },
-    }, 0x6000000);
+        .{ .name = "serial_driver", .service = service.SerialDriver },
+        .{ .name = "client", .service = service.RtcDriver, .mode = .provide },
+    });
     exe.root_module.addImport("zig-datetime", @"zig-datetime".module("zig-datetime"));
 
     b.installArtifact(exe);

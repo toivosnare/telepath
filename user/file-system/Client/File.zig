@@ -4,21 +4,27 @@ const mem = std.mem;
 const Allocator = mem.Allocator;
 const libt = @import("libt");
 const service = libt.service;
+const Channel = service.Channel;
 const WaitReason = libt.syscall.WaitReason;
 const main = @import("../main.zig");
 const fcache = @import("../file_cache.zig");
 const Client = @import("../Client.zig");
 const File = @This();
 
-channel: *service.file.provide.Type,
+region: *Region,
 file: *fcache.Entry,
 seek_offset: usize = 0,
 
-pub const Request = service.file.Request;
-pub const Response = service.file.Response;
+pub const Request = service.File.Request;
+pub const Response = service.File.Response;
+
+const Region = extern struct {
+    request: Channel(Request, service.File.channel_capacity, .receive),
+    response: Channel(Response, service.File.channel_capacity, .transmit),
+};
 
 pub fn hasRequest(self: File, request_out: *Client.Request, wait_reason: ?*WaitReason) bool {
-    const request_channel = &self.channel.request;
+    const request_channel = &self.region.request;
     request_channel.mutex.lock();
 
     if (!request_channel.isEmpty()) {
@@ -33,7 +39,7 @@ pub fn hasRequest(self: File, request_out: *Client.Request, wait_reason: ?*WaitR
 
     if (wait_reason) |wr|
         wr.payload = .{ .futex = .{
-            .address = &self.channel.request.empty.state,
+            .address = &request_channel.empty.state,
             .expected_value = old_state,
         } };
 
@@ -47,7 +53,7 @@ pub fn handleRequest(self: *File, request: Request, allocator: Allocator) void {
         .seek => .{ .seek = self.seek(request.payload.seek) },
         .close => .{ .close = self.close(request.payload.close) },
     };
-    self.channel.response.write(.{
+    self.region.response.write(.{
         .token = request.token,
         .op = request.op,
         .payload = payload,

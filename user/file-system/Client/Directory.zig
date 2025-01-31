@@ -5,6 +5,7 @@ const Allocator = mem.Allocator;
 const libt = @import("libt");
 const syscall = libt.syscall;
 const service = libt.service;
+const Channel = service.Channel;
 const WaitReason = syscall.WaitReason;
 const main = @import("../main.zig");
 const fcache = @import("../file_cache.zig");
@@ -12,15 +13,21 @@ const scache = @import("../sector_cache.zig");
 const Client = @import("../Client.zig");
 const Directory = @This();
 
-channel: *service.directory.provide.Type,
+region: *Region,
 root_directory: *fcache.Entry,
 seek_offset: usize = 0,
 
-pub const Request = service.directory.Request;
-pub const Response = service.directory.Response;
+pub const Request = service.Directory.Request;
+pub const Response = service.Directory.Response;
+
+const Region = extern struct {
+    request: Channel(Request, service.Directory.channel_capacity, .receive),
+    response: Channel(Response, service.Directory.channel_capacity, .transmit),
+    buffer: [service.Directory.buffer_capacity]u8,
+};
 
 pub fn hasRequest(self: Directory, request_out: *Client.Request, wait_reason: ?*WaitReason) bool {
-    const request_channel = &self.channel.request;
+    const request_channel = &self.region.request;
     request_channel.mutex.lock();
 
     if (!request_channel.isEmpty()) {
@@ -35,7 +42,7 @@ pub fn hasRequest(self: Directory, request_out: *Client.Request, wait_reason: ?*
 
     if (wait_reason) |wr|
         wr.payload = .{ .futex = .{
-            .address = &self.channel.request.empty.state,
+            .address = &request_channel.empty.state,
             .expected_value = old_state,
         } };
 
@@ -51,7 +58,7 @@ pub fn handleRequest(self: *Directory, request: Request, allocator: Allocator) v
         .stat => .{ .stat = if (self.stat(request.payload.stat)) true else |_| false },
         .sync => .{ .sync = self.sync(request.payload.sync) },
     };
-    self.channel.response.write(.{
+    self.region.response.write(.{
         .token = request.token,
         .op = request.op,
         .payload = payload,
@@ -93,47 +100,47 @@ fn close(self: *Directory, request: Request.Close) void {
 fn open(self: Directory, request: Request.Open, allocator: Allocator) !void {
     errdefer syscall.regionFree(.self, request.handle) catch {};
 
-    if (request.path_offset + request.path_length > service.directory.buffer_capacity)
+    if (request.path_offset + request.path_length > service.Directory.buffer_capacity)
         return error.InvalidParameter;
     if (request.path_length == 0)
         return error.InvalidParameter;
-    const path = self.channel.buffer[request.path_offset..][0..request.path_length];
+    const path = self.region.buffer[request.path_offset..][0..request.path_length];
 
     const entry = try self.root_directory.lookup(path);
     errdefer entry.unref();
 
-    const channel_size_in_bytes: usize = if (entry.kind == .directory)
-        @sizeOf(service.directory.provide.Type)
+    const needed_region_size_in_bytes: usize = if (entry.kind == .directory)
+        @sizeOf(service.Directory)
     else
-        @sizeOf(service.file.provide.Type);
-    const channel_size = math.divCeil(usize, channel_size_in_bytes, mem.page_size) catch unreachable;
+        @sizeOf(service.File);
+    const needed_region_size = math.divCeil(usize, needed_region_size_in_bytes, mem.page_size) catch unreachable;
     const region_size = try syscall.regionSize(.self, request.handle);
-    if (region_size < channel_size)
+    if (region_size < needed_region_size)
         return error.InvalidParameter;
 
-    const channel_ptr = try syscall.regionMap(.self, request.handle, null);
-    errdefer _ = syscall.regionUnmap(.self, channel_ptr) catch {};
+    const region_ptr = try syscall.regionMap(.self, request.handle, null);
+    errdefer _ = syscall.regionUnmap(.self, region_ptr) catch {};
 
     const new_client = try allocator.create(Client);
     new_client.* = if (entry.kind == .directory)
         .{ .kind = .{ .directory = .{
-            .channel = @ptrCast(channel_ptr),
+            .region = @ptrCast(region_ptr),
             .root_directory = entry,
         } } }
     else
         .{ .kind = .{ .file = .{
-            .channel = @ptrCast(channel_ptr),
+            .region = @ptrCast(region_ptr),
             .file = entry,
         } } };
     main.addClient(new_client);
 }
 
 fn stat(self: Directory, request: Request.Stat) !void {
-    if (request.path_offset + request.path_length > service.directory.buffer_capacity)
+    if (request.path_offset + request.path_length > service.Directory.buffer_capacity)
         return error.InvalidParameter;
     if (request.path_length == 0)
         return error.InvalidParameter;
-    const path = self.channel.buffer[request.path_offset..][0..request.path_length];
+    const path = self.region.buffer[request.path_offset..][0..request.path_length];
 
     const fentry = try self.root_directory.lookup(path);
     defer fentry.unref();

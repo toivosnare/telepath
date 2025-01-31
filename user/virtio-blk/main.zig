@@ -4,6 +4,9 @@ const math = std.math;
 const mem = std.mem;
 const libt = @import("libt");
 const syscall = libt.syscall;
+const service = libt.service;
+const Channel = service.Channel;
+const BlockDriver = service.BlockDriver;
 const virtio = @import("virtio.zig");
 const Status = virtio.MmioRegisters.Status;
 const services = @import("services");
@@ -96,6 +99,11 @@ const Request = extern struct {
     }
 };
 
+const Client = extern struct {
+    request: Channel(BlockDriver.Request, BlockDriver.channel_capacity, .receive),
+    response: Channel(BlockDriver.Response, BlockDriver.channel_capacity, .transmit),
+};
+
 const interrupt_source = 0x08;
 const Queue = virtio.Queue(8);
 var queue: Queue = undefined;
@@ -180,7 +188,7 @@ pub fn main(args: []usize) !usize {
 
     requests_physical_address = @intFromPtr(syscall.processTranslate(.self, &requests) catch unreachable);
 
-    const client = services.client;
+    const client: *Client = @ptrCast(services.client);
     const request_channel = &client.request;
     const response_channel = &client.response;
     const request_channel_index = 0;

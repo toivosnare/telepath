@@ -94,7 +94,7 @@ pub fn main(args: []usize) !void {
     const root_fcache_entry = fcache.init(root_directory_sector, allocator);
     const root_client = try allocator.create(Client);
     root_client.* = .{ .kind = .{ .directory = .{
-        .channel = services.client,
+        .region = @ptrCast(services.client),
         .root_directory = root_fcache_entry,
     } } };
     addClient(root_client);

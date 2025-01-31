@@ -47,20 +47,6 @@ pub fn addTelepathExecutable(
 }
 
 fn addServices(exe: *Step.Compile, options: []const ServiceOptions, libt_module: *Build.Module) void {
-    inline for (options) |option| {
-        if (option.mode == .provide) {
-            if (!@hasDecl(option.service, "provide"))
-                @compileError("Provided service must have public \"provide\" declaration.");
-            if (!@hasDecl(option.service.provide, "Type"))
-                @compileError("Provided service must have public \"provide.Type\" declaration.");
-        } else {
-            if (!@hasDecl(option.service, "consume"))
-                @compileError("Consumed service must have public \"consume\" declaration.");
-            if (!@hasDecl(option.service.consume, "Type"))
-                @compileError("Consumed service must have public \"consume.Type\" declaration.");
-        }
-    }
-
     exe.linker_script = generateLinkerScript(exe, options);
     const b = exe.step.owner;
     const service_module = b.createModule(.{
@@ -82,12 +68,11 @@ fn generateServiceFile(exe: *Step.Compile, options: []const ServiceOptions) Buil
 
     writer.writeAll("const service = @import(\"libt\").service;\n") catch @panic("OOM");
     inline for (options) |option| {
-        const inner = if (option.mode == .provide) option.service.provide else option.service.consume;
         writer.print(
-            \\extern var @"{s}_start": anyopaque;
-            \\pub const @"{s}": *{s} = @alignCast(@ptrCast(&@"{s}_start"));
+            \\extern var @"{0s}_start": anyopaque;
+            \\pub const @"{0s}": *{1s} = @alignCast(@ptrCast(&@"{0s}_start"));
             \\
-        , .{ option.name, option.name, @typeName(inner.Type), option.name }) catch @panic("OOM");
+        , .{ option.name, @typeName(option.service) }) catch @panic("OOM");
     }
 
     const b = exe.step.owner;
@@ -112,11 +97,10 @@ fn generateLinkerScript(exe: *Step.Compile, options: []const ServiceOptions) Bui
         \\
     ) catch @panic("OOM");
     inline for (options) |option| {
-        const inner = if (option.mode == .provide) option.service.provide else option.service.consume;
         const flags: service.Flags = .{
             .provide = option.mode == .provide,
             .readable = true,
-            .writable = @hasDecl(inner, "write") and @TypeOf(inner.write) == bool and inner.write,
+            .writable = true, // TODO: add read-only mode?
             .executable = false,
         };
         writer.print("{s} 0x{x} FLAGS(0x{x});\n", .{ option.name, service.hash(option.service), @as(u4, @bitCast(flags)) }) catch @panic("OOM");
@@ -133,12 +117,11 @@ fn generateLinkerScript(exe: *Step.Compile, options: []const ServiceOptions) Bui
         \\
     ) catch @panic("OOM");
     inline for (options) |option| {
-        const inner = if (option.mode == .provide) option.service.provide else option.service.consume;
         const page_size = 4096;
-        const service_size = mem.alignForward(usize, @sizeOf(inner.Type), page_size);
+        const service_size = mem.alignForward(usize, @sizeOf(option.service), page_size);
         writer.print(
-            ".{s} (TYPE = SHT_NOBITS) : ALIGN(0x1000) {{ {s}_start = .; . += 0x{x}; }} :{s}\n",
-            .{ option.name, option.name, service_size, option.name },
+            ".{0s} (TYPE = SHT_NOBITS) : ALIGN(0x1000) {{ {0s}_start = .; . += 0x{1x}; }} :{0s}\n",
+            .{ option.name, service_size },
         ) catch @panic("OOM");
     }
     writer.writeAll("}\n") catch @panic("OOM");

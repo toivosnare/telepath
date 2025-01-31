@@ -7,7 +7,7 @@ const libt = @import("libt");
 const syscall = libt.syscall;
 const Handle = libt.Handle;
 const service = libt.service;
-const DateTime = service.rtc_driver.DateTime;
+const DateTime = service.RtcDriver.DateTime;
 const Spinlock = libt.sync.Spinlock;
 const services = @import("services");
 const rtc = services.rtc;
@@ -390,13 +390,13 @@ pub const Entry = struct {
 
     pub fn readdir(self: *Entry, seek_offset: *usize, region_handle: Handle, region_offset: usize, n: usize) usize {
         const region_size = syscall.regionSize(.self, region_handle) catch return 0;
-        if (region_size * mem.page_size < (region_offset + n) * @sizeOf(service.directory.Entry))
+        if (region_size * mem.page_size < (region_offset + n) * @sizeOf(service.Directory.Entry))
             return 0;
 
         const region_ptr = syscall.regionMap(.self, region_handle, null) catch return 0;
         defer _ = syscall.regionUnmap(.self, region_ptr) catch {};
 
-        const directory_entries_start: [*]service.directory.Entry = @ptrCast(region_ptr);
+        const directory_entries_start: [*]service.Directory.Entry = @ptrCast(region_ptr);
         const directory_entries = directory_entries_start[region_offset .. region_offset + n];
 
         var entries_read: usize = 0;
@@ -413,9 +413,9 @@ pub const Entry = struct {
     }
 
     pub fn stat(self: *Entry, region_handle: Handle, region_offset: usize) !void {
-        var directory_entry: service.directory.Entry = undefined;
+        var directory_entry: service.Directory.Entry = undefined;
         self.toDirectoryEntry(&directory_entry);
-        try syscall.regionWrite(.self, region_handle, &directory_entry, region_offset, @sizeOf(service.directory.Entry));
+        try syscall.regionWrite(.self, region_handle, &directory_entry, region_offset, @sizeOf(service.Directory.Entry));
     }
 
     fn flush(self: Entry) void {
@@ -443,7 +443,7 @@ pub const Entry = struct {
         sentry.state = .dirty;
     }
 
-    fn toDirectoryEntry(self: *Entry, directory_entry: *service.directory.Entry) void {
+    fn toDirectoryEntry(self: *Entry, directory_entry: *service.Directory.Entry) void {
         const name = self.getName();
         @memcpy(directory_entry.name[0..name.len], name);
         directory_entry.name_length = @intCast(name.len);

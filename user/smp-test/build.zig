@@ -12,7 +12,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     }, &[_]libt.ServiceOptions{
-        .{ .name = "serial", .service = service.serial_driver },
+        .{ .name = "serial", .service = service.SerialDriver },
     });
 
     b.installArtifact(exe);
