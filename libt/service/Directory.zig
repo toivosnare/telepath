@@ -13,11 +13,6 @@ buffer: [buffer_capacity]u8 = undefined,
 pub const channel_capacity = 8;
 pub const buffer_capacity = 256;
 
-pub const Whence = enum(u8) {
-    set = 0,
-    current = 1,
-};
-
 pub const Operation = enum(u8) {
     read = 0,
     seek = 2,
@@ -50,6 +45,11 @@ pub const Request = extern struct {
     pub const Seek = extern struct {
         offset: isize,
         whence: Whence,
+
+        pub const Whence = enum(u8) {
+            set = 0,
+            current = 1,
+        };
     };
 
     pub const Close = extern struct {};
@@ -58,6 +58,13 @@ pub const Request = extern struct {
         path_offset: usize,
         path_length: usize,
         handle: Handle,
+        kind: Kind,
+
+        pub const Kind = enum(u8) {
+            any = 0,
+            directory = 1,
+            file = 2,
+        };
     };
 
     pub const Stat = extern struct {
@@ -122,7 +129,7 @@ pub fn read(self: *Directory, handle: Handle, offset: usize, n: usize) usize {
     return response.payload.read;
 }
 
-pub fn seek(self: *Directory, offset: isize, whence: Whence) isize {
+pub fn seek(self: *Directory, offset: isize, whence: Request.Seek.Whence) isize {
     self.request.write(.{
         .token = 0,
         .op = .seek,
@@ -146,7 +153,7 @@ pub fn close(self: *Directory) void {
     assert(response.token == 0);
 }
 
-pub fn open(self: *Directory, path: []const u8, handle: Handle) bool {
+pub fn open(self: *Directory, path: []const u8, handle: Handle, kind: Request.Open.Kind) bool {
     @memcpy(self.buffer[0..path.len], path);
     self.request.write(.{
         .token = 0,
@@ -155,6 +162,7 @@ pub fn open(self: *Directory, path: []const u8, handle: Handle) bool {
             .path_offset = 0,
             .path_length = path.len,
             .handle = handle,
+            .kind = kind,
         } },
     });
     const response = self.response.read();

@@ -172,7 +172,7 @@ fn ls(
     const shared_channel_handle = try syscall.regionShare(.self, channel_handle, file_system_handle, .{ .read = true, .write = true });
 
     const path = it.next() orelse "/";
-    if (!root_directory.open(path, shared_channel_handle)) {
+    if (!root_directory.open(path, shared_channel_handle, .directory)) {
         try writer.writeAll("Error\n");
         return;
     }
@@ -228,7 +228,7 @@ fn cat(
     const shared_channel_handle = try syscall.regionShare(.self, channel_handle, file_system_handle, .{ .read = true, .write = true });
 
     const path = it.next() orelse return;
-    if (!root_directory.open(path, shared_channel_handle)) {
+    if (!root_directory.open(path, shared_channel_handle, .file)) {
         try writer.writeAll("Error\n");
         return;
     }

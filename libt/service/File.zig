@@ -10,12 +10,6 @@ response: Channel(Response, channel_capacity, .receive),
 
 pub const channel_capacity = 8;
 
-pub const Whence = enum(u8) {
-    set = 0,
-    current = 1,
-    end = 2,
-};
-
 pub const Operation = enum(u8) {
     read = 0,
     write = 1,
@@ -50,6 +44,12 @@ pub const Request = extern struct {
     pub const Seek = extern struct {
         offset: isize,
         whence: Whence,
+
+        pub const Whence = enum(u8) {
+            set = 0,
+            current = 1,
+            end = 2,
+        };
     };
 
     pub const Close = extern struct {};
@@ -103,7 +103,7 @@ pub fn write(self: *File, handle: Handle, offset: usize, n: usize) usize {
     return response.payload.write;
 }
 
-pub fn seek(self: *File, offset: isize, whence: Whence) isize {
+pub fn seek(self: *File, offset: isize, whence: Request.Seek.Whence) isize {
     self.request.write(.{
         .token = 0,
         .op = .seek,

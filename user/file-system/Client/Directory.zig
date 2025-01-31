@@ -109,6 +109,11 @@ fn open(self: Directory, request: Request.Open, allocator: Allocator) !void {
     const entry = try self.root_directory.lookup(path);
     errdefer entry.unref();
 
+    if (request.kind == .directory and entry.kind != .directory)
+        return error.InvalidType;
+    if (request.kind == .file and entry.kind != .regular)
+        return error.InvalidType;
+
     const needed_region_size_in_bytes: usize = if (entry.kind == .directory)
         @sizeOf(service.Directory)
     else
