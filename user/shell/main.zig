@@ -165,33 +165,23 @@ fn ls(
     buf_ptr: *align(mem.page_size) anyopaque,
     file_system_handle: Handle,
 ) !void {
-    const channel_size_in_bytes = @sizeOf(Directory);
-    const channel_size = math.divCeil(usize, channel_size_in_bytes, mem.page_size) catch unreachable;
-    const channel_handle = try syscall.regionAllocate(.self, channel_size, .{ .read = true, .write = true }, null);
-    defer syscall.regionFree(.self, channel_handle) catch {};
-    const shared_channel_handle = try syscall.regionShare(.self, channel_handle, file_system_handle, .{ .read = true, .write = true });
-
     const path = it.next() orelse "/";
-    if (!root_directory.open(path, shared_channel_handle, .directory)) {
+    const directory = root_directory.openDirectory(path, file_system_handle) catch {
         try writer.writeAll("Error\n");
         return;
-    }
-
-    const directory: *Directory = @ptrCast(try syscall.regionMap(.self, channel_handle, null));
-    defer _ = syscall.regionUnmap(.self, @alignCast(@ptrCast(directory))) catch {};
-    defer directory.close();
+    };
+    defer directory.closeDirectory();
 
     var entries_read: usize = 0;
-    const DirectoryEntry = libt.service.Directory.Entry;
     while (true) {
-        const entries_to_read = mem.page_size / @sizeOf(DirectoryEntry) - entries_read;
+        const entries_to_read = mem.page_size / @sizeOf(Directory.Entry) - entries_read;
         const n = directory.read(shared_buf_handle, entries_read, entries_to_read);
         if (n == 0)
             break;
         entries_read += n;
     }
 
-    var entries: []DirectoryEntry = undefined;
+    var entries: []Directory.Entry = undefined;
     entries.ptr = @ptrCast(buf_ptr);
     entries.len = entries_read;
 
@@ -221,21 +211,12 @@ fn cat(
     buf_ptr: *align(mem.page_size) anyopaque,
     file_system_handle: Handle,
 ) !void {
-    const channel_size_in_bytes = @sizeOf(File);
-    const channel_size = math.divCeil(usize, channel_size_in_bytes, mem.page_size) catch unreachable;
-    const channel_handle = try syscall.regionAllocate(.self, channel_size, .{ .read = true, .write = true }, null);
-    defer syscall.regionFree(.self, channel_handle) catch {};
-    const shared_channel_handle = try syscall.regionShare(.self, channel_handle, file_system_handle, .{ .read = true, .write = true });
-
     const path = it.next() orelse return;
-    if (!root_directory.open(path, shared_channel_handle, .file)) {
+    const file = root_directory.openFile(path, file_system_handle) catch {
         try writer.writeAll("Error\n");
         return;
-    }
-
-    const file: *File = @ptrCast(try syscall.regionMap(.self, channel_handle, null));
-    defer _ = syscall.regionUnmap(.self, @alignCast(@ptrCast(file))) catch {};
-    defer file.close();
+    };
+    defer file.closeFile();
 
     var bytes_read: usize = 0;
     while (true) {

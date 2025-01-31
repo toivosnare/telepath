@@ -1,8 +1,12 @@
 const std = @import("std");
 const assert = std.debug.assert;
+const math = std.math;
+const mem = std.mem;
 const libt = @import("../root.zig");
+const syscall = libt.syscall;
 const DateTime = libt.service.RtcDriver.DateTime;
 const Channel = libt.service.Channel;
+const File = libt.service.File;
 const Handle = libt.Handle;
 const Directory = @This();
 
@@ -153,14 +157,19 @@ pub fn close(self: *Directory) void {
     assert(response.token == 0);
 }
 
-pub fn open(self: *Directory, path: []const u8, handle: Handle, kind: Request.Open.Kind) bool {
-    @memcpy(self.buffer[0..path.len], path);
+pub fn closeDirectory(self: *Directory) void {
+    self.close();
+    const handle = syscall.regionUnmap(.self, @alignCast(@ptrCast(self))) catch unreachable;
+    syscall.regionFree(.self, handle) catch {};
+}
+
+pub fn open(self: *Directory, path_offset: usize, path_length: usize, handle: Handle, kind: Request.Open.Kind) bool {
     self.request.write(.{
         .token = 0,
         .op = .open,
         .payload = .{ .open = .{
-            .path_offset = 0,
-            .path_length = path.len,
+            .path_offset = path_offset,
+            .path_length = path_length,
             .handle = handle,
             .kind = kind,
         } },
@@ -168,6 +177,32 @@ pub fn open(self: *Directory, path: []const u8, handle: Handle, kind: Request.Op
     const response = self.response.read();
     assert(response.token == 0);
     return response.payload.open;
+}
+
+pub fn openDirectory(self: *Directory, path: []const u8, fs_handle: Handle) !*Directory {
+    const size = math.divCeil(usize, @sizeOf(Directory), mem.page_size) catch unreachable;
+    const handle = try syscall.regionAllocate(.self, size, .{ .read = true, .write = true }, null);
+    errdefer syscall.regionFree(.self, handle) catch {};
+    const shared_handle = try syscall.regionShare(.self, handle, fs_handle, .{ .read = true, .write = true });
+
+    @memcpy(self.buffer[0..path.len], path);
+    if (!self.open(0, path.len, shared_handle, .directory))
+        return error.Failed;
+
+    return @ptrCast(try syscall.regionMap(.self, handle, null));
+}
+
+pub fn openFile(self: *Directory, path: []const u8, fs_handle: Handle) !*File {
+    const size = math.divCeil(usize, @sizeOf(File), mem.page_size) catch unreachable;
+    const handle = try syscall.regionAllocate(.self, size, .{ .read = true, .write = true }, null);
+    errdefer syscall.regionFree(.self, handle) catch {};
+    const shared_handle = try syscall.regionShare(.self, handle, fs_handle, .{ .read = true, .write = true });
+
+    @memcpy(self.buffer[0..path.len], path);
+    if (!self.open(0, path.len, shared_handle, .file))
+        return error.Failed;
+
+    return @ptrCast(try syscall.regionMap(.self, handle, null));
 }
 
 pub fn stat(self: *Directory, path: []const u8, handle: Handle, offset: usize) bool {

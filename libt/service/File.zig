@@ -1,6 +1,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const libt = @import("../root.zig");
+const syscall = libt.syscall;
 const Channel = libt.service.Channel;
 const Handle = libt.Handle;
 const File = @This();
@@ -125,4 +126,10 @@ pub fn close(self: *File) void {
     });
     const response = self.response.read();
     assert(response.token == 0);
+}
+
+pub fn closeFile(self: *File) void {
+    self.close();
+    const handle = syscall.regionUnmap(.self, @alignCast(@ptrCast(self))) catch unreachable;
+    syscall.regionFree(.self, handle) catch {};
 }
