@@ -9,6 +9,8 @@ comptime {
     _ = libt;
 }
 
+pub const std_options = libt.std_options;
+
 const Ns16550A = packed struct {
     rbr_thr: u8,
     ier: packed struct(u8) {
@@ -164,8 +166,8 @@ pub fn main(args: []usize) usize {
     const client = @import("services").client;
     const tx_channel = &client.tx;
     const rx_channel = &client.rx;
-    const tx_capacity = @typeInfo(@TypeOf(tx_channel)).Pointer.child.capacity;
-    const rx_capacity = @typeInfo(@TypeOf(rx_channel)).Pointer.child.capacity;
+    const tx_capacity = @typeInfo(@TypeOf(tx_channel)).pointer.child.capacity;
+    const rx_capacity = @typeInfo(@TypeOf(rx_channel)).pointer.child.capacity;
     const tx_channel_index = 0;
     const interrupt_index = 1;
     var wait_reasons: [2]syscall.WaitReason = .{

@@ -1,14 +1,15 @@
 .{
-    .name = "goldfish-rtc",
+    .name = .goldfish_rtc,
     .version = "0.0.0",
-    .minimum_zig_version = "0.11.0",
+    .fingerprint = 0x59cad9739a0ed50e,
+    .minimum_zig_version = "0.14.0",
     .dependencies = .{
         .libt = .{
             .path = "../../libt",
         },
         .@"zig-datetime" = .{
-            .url = "git+https://github.com/frmdstryr/zig-datetime.git#70aebf28fb3e137cd84123a9349d157a74708721",
-            .hash = "122077215ce36e125a490e59ec1748ffd4f6ba00d4d14f7308978e5360711d72d77f",
+            .url = "git+https://github.com/frmdstryr/zig-datetime.git#52d4fbe43a758589b74411ffec8ebcb1f12e2d13",
+            .hash = "datetime-0.8.0-cJNXzNiMAQBz4RV6Gz7qUNeE-xLDNLs_jNU5_zIZ48as",
         },
     },
     .paths = .{

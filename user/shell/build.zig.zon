@@ -1,7 +1,8 @@
 .{
-    .name = "shell",
+    .name = .shell,
     .version = "0.0.0",
-    .minimum_zig_version = "0.11.0",
+    .fingerprint = 0x4592b2fd42908960,
+    .minimum_zig_version = "0.14.0",
     .dependencies = .{
         .libt = .{
             .path = "../../libt",

@@ -1,4 +1,4 @@
-const page_size = @import("std").mem.page_size;
+const page_size = @import("std").heap.pageSize();
 const libt = @import("libt");
 const syscall = libt.syscall;
 

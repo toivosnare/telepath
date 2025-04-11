@@ -26,6 +26,8 @@ const Capability = proc.Capability;
 pub const std_options: std.Options = .{
     .log_level = .info,
     .logFn = logFn,
+    .page_size_min = 1 << 12,
+    .page_size_max = 1 << 12,
 };
 
 extern const linker_text: anyopaque;
@@ -168,7 +170,7 @@ export fn bootHartMain(boot_hart_id: Hart.Id, fdt_physical_start: PhysicalAddres
         const region_capability = Capability.get(region_handle, init_process) catch unreachable;
         const region = region_capability.object.region;
         const page_offset = rh.load_address % @sizeOf(Page);
-        const dest = mem.asBytes(region.allocation).ptr + page_offset;
+        const dest = mem.sliceAsBytes(region.allocation).ptr + page_offset;
 
         var source: []const u8 = undefined;
         source.ptr = @ptrFromInt(pr.initrd_physical_start + rh.offset);
@@ -292,7 +294,7 @@ var writer: std.io.AnyWriter = .{ .context = undefined, .writeFn = writeFn };
 
 fn writeFn(_: *const anyopaque, bytes: []const u8) !usize {
     for (bytes) |b| {
-        if (sbi.legacy.consolePutChar(b) != .SUCCESS) @panic("consolePutChar");
+        if (sbi.legacy.consolePutChar(b) != .Success) @panic("consolePutChar");
     }
     return bytes.len;
 }

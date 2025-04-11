@@ -1,6 +1,6 @@
 const std = @import("std");
 const atomic = std.atomic;
-const page_size = std.mem.page_size;
+const page_size = std.heap.pageSize();
 const libt = @import("root.zig");
 const Handle = libt.Handle;
 
@@ -223,14 +223,14 @@ pub fn packResult(result: Error!usize) usize {
 
 pub fn unpackResult(comptime T: type, a0: usize) T {
     const type_info = @typeInfo(T);
-    if (type_info != .ErrorUnion)
+    if (type_info != .error_union)
         @compileError("T must be an error union");
 
-    // const E = type_info.ErrorUnion.error_set;
-    const P = type_info.ErrorUnion.payload;
+    // const E = type_info.error_union.error_set;
+    const P = type_info.error_union.payload;
 
     const signed: isize = @bitCast(a0);
-    const result = switch (signed) {
+    const result: Error!P = switch (signed) {
         -1 => error.InvalidParameter,
         -2 => error.Crashed,
         -3 => error.Timeout,
@@ -242,10 +242,10 @@ pub fn unpackResult(comptime T: type, a0: usize) T {
         -9 => error.Reserved,
         -10 => error.WouldBlock,
         else => switch (@typeInfo(P)) {
-            .Enum => @as(P, @enumFromInt(a0)),
-            .Void => {},
-            .Pointer => @as(P, @ptrFromInt(a0)),
-            .Int => a0,
+            .@"enum" => @as(P, @enumFromInt(a0)),
+            .void => {},
+            .pointer => @as(P, @ptrFromInt(a0)),
+            .int => a0,
             else => @compileError("unsupported payload type"),
         },
     };

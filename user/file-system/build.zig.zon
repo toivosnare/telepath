@@ -1,7 +1,8 @@
 .{
-    .name = "file-system",
+    .name = .file_system,
     .version = "0.0.0",
-    .minimum_zig_version = "0.11.0",
+    .fingerprint = 0x715a373479a36ade,
+    .minimum_zig_version = "0.14.0",
     .dependencies = .{
         .libt = .{
             .path = "../../libt",
@@ -10,8 +11,11 @@
     .paths = .{
         "build.zig",
         "build.zig.zon",
-        "main.zig",
-        "cache.zig",
+        "Client",
+        "Client.zig",
         "fat.zig",
+        "file_cache.zig",
+        "main.zig",
+        "sector_cache.zig",
     },
 }

@@ -14,7 +14,7 @@ pub const max_order = 13;
 pub const max_order_pages = 1 << (max_order - 1);
 
 var buckets: *[max_order]Bucket = undefined;
-var bitfield: std.PackedIntSlice(u1) = undefined;
+var bitfield: []u8 = undefined;
 var pages: PageSlice = undefined;
 var max_nodes: usize = undefined;
 var lock: Spinlock = .{};
@@ -105,9 +105,9 @@ const Node = struct {
 
     pub fn flip(self: *const Self, order: usize) bool {
         const parent_index = self.parentIndex(order);
-        const old_value = bitfield.get(parent_index);
+        const old_value = mem.readPackedIntNative(u1, bitfield, parent_index);
         const new_value = old_value ^ 1;
-        bitfield.set(parent_index, new_value);
+        mem.writePackedIntNative(u1, bitfield, parent_index, new_value);
         return new_value == 1;
     }
 };
@@ -136,8 +136,7 @@ pub fn init(
         bucket.free_list.init();
         bucket.free_count = 0;
     }
-    const bitfield_bytes = mem.sliceAsBytes(heap[0..metadata_pages])[buckets_bytes..];
-    bitfield = std.PackedIntSlice(u1).init(bitfield_bytes, bitfield_bits);
+    bitfield = mem.sliceAsBytes(heap[0..metadata_pages])[buckets_bytes..];
     pages = heap[metadata_pages..];
 
     log.info("Total free memory is {}", .{fmt.fmtIntSizeBin(pages.len * @sizeOf(Page))});
@@ -194,7 +193,7 @@ pub fn allocate(requested_order: usize) !PageSlice {
     var result: PageSlice = undefined;
     result.ptr = @alignCast(@ptrCast(node));
     result.len = @as(usize, 1) << @intCast(requested_order);
-    @memset(mem.asBytes(result), 0);
+    @memset(mem.sliceAsBytes(result), 0);
     return result;
 }
 
@@ -221,6 +220,6 @@ pub fn free(slice: PageSlice) void {
 
 pub fn onAddressTranslationEnabled() void {
     buckets = mm.logicalFromPhysical(buckets);
-    bitfield.bytes.ptr = mm.logicalFromPhysical(bitfield.bytes.ptr);
+    bitfield.ptr = mm.logicalFromPhysical(bitfield.ptr);
     pages.ptr = mm.logicalFromPhysical(pages.ptr);
 }

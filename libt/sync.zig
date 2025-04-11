@@ -21,7 +21,7 @@ pub const Mutex = extern struct {
     }
 
     fn lockSlow(self: *Mutex) void {
-        @setCold(true);
+        @branchHint(.cold);
 
         while (self.state.swap(contended, .acquire) != unlocked) {
             libt.waitFutex(&self.state, contended, math.maxInt(usize)) catch |err| switch (err) {

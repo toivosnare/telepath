@@ -26,7 +26,9 @@ trampoline:
 	csrw satp, a1
 	sfence.vma
 	add sp, sp, a2
-	la ra, main
+1:
+	auipc ra, %pcrel_hi(main)
+	addi ra, ra, %pcrel_lo(1b)
 	add ra, ra, a2
 	jr ra
 
@@ -69,7 +71,9 @@ handleTrap:
 	sd t0, 0(a0)
 	csrr t0, sscratch
 	sd t0, 80(a0)
-	la sp, kernel_stack
+1:
+	auipc sp, %pcrel_hi(kernel_stack)
+	addi sp, sp, %pcrel_lo(1b)
 	li t0, KERNEL_STACK_SIZE_PER_HART
 	ld a1, 256(a0)
 	addi t1, a1, 1

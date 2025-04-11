@@ -1,8 +1,8 @@
 .{
-    .name = "telepath",
+    .name = .telepath,
     .version = "0.0.0",
-    .minimum_zig_version = "0.11.0",
-
+    .fingerprint = 0x9042404edb4eced4,
+    .minimum_zig_version = "0.14.0",
     .dependencies = .{
         .kernel = .{
             .path = "./kernel",
@@ -17,6 +17,5 @@
     .paths = .{
         "build.zig",
         "build.zig.zon",
-        ".gitignore",
     },
 }

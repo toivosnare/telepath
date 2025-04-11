@@ -13,17 +13,20 @@ pub fn build(b: *std.Build) void {
     const entry_header = b.addConfigHeader(.{
         .include_path = "entry.h",
     }, .{
-        .KERNEL_STACK_SIZE_PER_HART = entry.kernel_stack_size_per_hart,
+        .KERNEL_STACK_SIZE_PER_HART = @as(i64, @intCast(entry.kernel_stack_size_per_hart)),
     });
 
-    const kernel = b.addExecutable(.{
-        .name = "kernel",
+    const kernel_module = b.createModule(.{
         .root_source_file = b.path("main.zig"),
         .target = target,
         .optimize = optimize,
         .pic = true,
         .code_model = .medium,
         .strip = false,
+    });
+    const kernel = b.addExecutable(.{
+        .name = "kernel",
+        .root_module = kernel_module,
     });
     kernel.addAssemblyFile(b.path("entry.S"));
     kernel.setLinkerScript(b.path("kernel.ld"));

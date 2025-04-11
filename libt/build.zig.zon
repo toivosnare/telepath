@@ -1,11 +1,17 @@
 .{
-    .name = "libt",
+    .name = .libt,
     .version = "0.0.0",
-    .minimum_zig_version = "0.11.0",
+    .fingerprint = 0x1711db08373eeb5b,
+    .minimum_zig_version = "0.14.0",
     .paths = .{
         "build.zig",
         "build.zig.zon",
-        "libt.zig",
-        "tix.zig"
+        "heap.zig",
+        "root.zig",
+        "service",
+        "start.zig",
+        "sync.zig",
+        "syscall.zig",
+        "tix.zig",
     },
 }

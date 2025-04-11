@@ -138,7 +138,7 @@ fn Csr(comptime name: []const u8, comptime T: type) type {
         @compileError("T must be word sized.");
 
     return struct {
-        pub usingnamespace if (@typeInfo(T) == .Struct) T else struct {};
+        pub usingnamespace if (@typeInfo(T) == .@"struct") T else struct {};
         pub const Field = meta.FieldEnum(T);
         pub const Type = T;
 

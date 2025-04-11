@@ -1,7 +1,8 @@
 .{
-    .name = "elf2tix",
+    .name = .elf2tix,
     .version = "0.0.0",
-    .minimum_zig_version = "0.11.0",
+    .fingerprint = 0xce9d28b603871196,
+    .minimum_zig_version = "0.14.0",
     .dependencies = .{
         .libt = .{
             .path = "../../libt",

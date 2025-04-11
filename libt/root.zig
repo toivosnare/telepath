@@ -10,6 +10,11 @@ pub const Handle = enum(u64) {
     _,
 };
 
+pub const std_options: std.Options = .{
+    .page_size_min = 1 << 12,
+    .page_size_max = 1 << 12,
+};
+
 comptime {
     if (@import("builtin").os.tag == .freestanding)
         _ = @import("start.zig");

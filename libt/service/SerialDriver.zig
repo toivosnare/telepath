@@ -9,5 +9,5 @@ const capacity = 2004;
 
 comptime {
     const std = @import("std");
-    std.debug.assert(@sizeOf(@This()) == std.mem.page_size);
+    std.debug.assert(@sizeOf(@This()) == 4096);
 }

@@ -1,5 +1,5 @@
 const std = @import("std");
-const datetime = @import("zig-datetime").datetime;
+const datetime = @import("datetime").datetime;
 const libt = @import("libt");
 const syscall = libt.syscall;
 const service = libt.service;
@@ -10,6 +10,8 @@ const services = @import("services");
 comptime {
     _ = libt;
 }
+
+pub const std_options = libt.std_options;
 
 const GoldfishRtc = extern struct {
     time_low: u32,

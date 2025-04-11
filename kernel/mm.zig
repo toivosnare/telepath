@@ -16,7 +16,7 @@ pub const UserVirtualAddress = VirtualAddress;
 pub const LogicalAddress = VirtualAddress;
 pub const KernelVirtualAddress = VirtualAddress;
 
-pub const Page = [mem.page_size]u8;
+pub const Page = [std.heap.pageSize()]u8;
 pub const PagePtr = *align(@sizeOf(Page)) Page;
 pub const ConstPagePtr = *align(@sizeOf(Page)) const Page;
 pub const PageSlice = []align(@sizeOf(Page)) Page;
@@ -187,32 +187,32 @@ pub fn init(
 
 pub fn kernelVirtualFromPhysical(physical: anytype) @TypeOf(physical) {
     return switch (@typeInfo(@TypeOf(physical))) {
-        .Int => physical +% kernel_offset,
-        .Pointer => @ptrFromInt(@intFromPtr(physical) +% kernel_offset),
+        .int => physical +% kernel_offset,
+        .pointer => @ptrFromInt(@intFromPtr(physical) +% kernel_offset),
         else => @compileError("Argument must be an integer or a pointer."),
     };
 }
 
 pub fn physicalFromKernelVirtual(kernel_virtual: anytype) @TypeOf(kernel_virtual) {
     return switch (@typeInfo(@TypeOf(kernel_virtual))) {
-        .Int => kernel_virtual -% kernel_offset,
-        .Pointer => @ptrFromInt(@intFromPtr(kernel_virtual) -% kernel_offset),
+        .int => kernel_virtual -% kernel_offset,
+        .pointer => @ptrFromInt(@intFromPtr(kernel_virtual) -% kernel_offset),
         else => @compileError("Argument must be an integer or a pointer."),
     };
 }
 
 pub fn logicalFromPhysical(physical: anytype) @TypeOf(physical) {
     return switch (@typeInfo(@TypeOf(physical))) {
-        .Int => physical +% logical_offset,
-        .Pointer => @ptrFromInt(@intFromPtr(physical) +% logical_offset),
+        .int => physical +% logical_offset,
+        .pointer => @ptrFromInt(@intFromPtr(physical) +% logical_offset),
         else => @compileError("Argument must be an integer or a pointer."),
     };
 }
 
 pub fn physicalFromLogical(logical: anytype) @TypeOf(logical) {
     return switch (@typeInfo(@TypeOf(logical))) {
-        .Int => logical -% logical_offset,
-        .Pointer => @ptrFromInt(@intFromPtr(logical) -% logical_offset),
+        .int => logical -% logical_offset,
+        .pointer => @ptrFromInt(@intFromPtr(logical) -% logical_offset),
         else => @compileError("Argument must be an integer or a pointer."),
     };
 }

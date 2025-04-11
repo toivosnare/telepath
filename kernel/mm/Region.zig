@@ -108,8 +108,7 @@ pub fn sizeInBytes(self: *Region) usize {
 }
 
 pub fn index(self: *const Region) Index {
-    // FIXME: use pointer subtraction introduced in Zig 0.14.
-    return (@intFromPtr(self) - @intFromPtr(&table[0])) / @sizeOf(Region);
+    return self - &table[0];
 }
 
 pub fn read(self: *Region, to: UserVirtualAddress, offset: usize, length: usize) !void {
@@ -123,7 +122,7 @@ pub fn read(self: *Region, to: UserVirtualAddress, offset: usize, length: usize)
     var dest: []u8 = undefined;
     dest.ptr = @ptrFromInt(to);
     dest.len = length;
-    const source = mm.logicalFromPhysical(mem.asBytes(self.allocation).ptr) + offset;
+    const source = mm.logicalFromPhysical(mem.sliceAsBytes(self.allocation).ptr) + offset;
     @memcpy(dest, source);
 }
 
@@ -135,7 +134,7 @@ pub fn write(self: *Region, from: UserVirtualAddress, offset: usize, length: usi
     if (from + length > mm.user_virtual_end)
         return error.InvalidParameter;
 
-    const dest = mm.logicalFromPhysical(mem.asBytes(self.allocation).ptr) + offset;
+    const dest = mm.logicalFromPhysical(mem.sliceAsBytes(self.allocation).ptr) + offset;
     var source: []u8 = undefined;
     source.ptr = @ptrFromInt(from);
     source.len = length;

@@ -1,7 +1,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const math = std.math;
-const mem = std.mem;
+const heap = std.heap;
 const libt = @import("libt");
 const syscall = libt.syscall;
 const service = libt.service;
@@ -14,6 +14,8 @@ const services = @import("services");
 comptime {
     _ = libt;
 }
+
+pub const std_options = libt.std_options;
 
 const Config = extern struct {
     capacity: u64,
@@ -116,7 +118,7 @@ pub fn main(args: []usize) !usize {
     try writer.writeAll("Initializing virtio-blk driver.\n");
 
     const physical_address = 0x10008000;
-    const region_size = math.divCeil(usize, @sizeOf(virtio.MmioRegisters) + @sizeOf(Config), mem.page_size) catch unreachable;
+    const region_size = math.divCeil(usize, @sizeOf(virtio.MmioRegisters) + @sizeOf(Config), heap.pageSize()) catch unreachable;
     const region = syscall.regionAllocate(.self, region_size, .{ .read = true, .write = true }, @ptrFromInt(physical_address)) catch unreachable;
     const regs: *volatile virtio.MmioRegisters = @ptrCast(syscall.regionMap(.self, region, null) catch unreachable);
 
@@ -210,7 +212,7 @@ pub fn main(args: []usize) !usize {
                     .token = request.token,
                 });
             };
-            request_channel.read_index = (request_channel.read_index + 1) % @typeInfo(@TypeOf(response_channel)).Pointer.child.capacity;
+            request_channel.read_index = (request_channel.read_index + 1) % @typeInfo(@TypeOf(response_channel)).pointer.child.capacity;
             request_channel.length -= 1;
             request_channel.full.notify(.one);
         }

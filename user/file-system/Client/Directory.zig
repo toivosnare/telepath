@@ -1,6 +1,7 @@
 const std = @import("std");
 const math = std.math;
 const mem = std.mem;
+const heap = std.heap;
 const Allocator = mem.Allocator;
 const libt = @import("libt");
 const syscall = libt.syscall;
@@ -118,7 +119,7 @@ fn open(self: Directory, request: Request.Open, allocator: Allocator) !void {
         @sizeOf(service.Directory)
     else
         @sizeOf(service.File);
-    const needed_region_size = math.divCeil(usize, needed_region_size_in_bytes, mem.page_size) catch unreachable;
+    const needed_region_size = math.divCeil(usize, needed_region_size_in_bytes, heap.pageSize()) catch unreachable;
     const region_size = try syscall.regionSize(.self, request.handle);
     if (region_size < needed_region_size)
         return error.InvalidParameter;

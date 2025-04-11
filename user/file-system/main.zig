@@ -18,6 +18,8 @@ pub const os = libt;
 pub const std_options: std.Options = .{
     .log_level = .info,
     .logFn = logFn,
+    .page_size_min = libt.std_options.page_size_min,
+    .page_size_max = libt.std_options.page_size_max,
 };
 
 comptime {
@@ -53,7 +55,7 @@ const MasterBootRecord = extern struct {
         }
     };
 
-    pub const boot_signature: [2]u8 = .{ 0x55, 0xAA };
+    pub const valid_boot_signature: [2]u8 = .{ 0x55, 0xAA };
 
     comptime {
         assert(@sizeOf(MasterBootRecord) == fat.sector_size);
@@ -73,7 +75,7 @@ pub fn main(args: []usize) !void {
 
     try readSector(0, @ptrCast(sector_buf.ptr));
     const mbr: *const MasterBootRecord = @ptrCast(sector_buf.ptr);
-    if (!mem.eql(u8, &mbr.boot_signature, &MasterBootRecord.boot_signature)) {
+    if (!mem.eql(u8, &mbr.boot_signature, &MasterBootRecord.valid_boot_signature)) {
         try writer.writeAll("Invalid MBR boot signature.\n");
         return error.InvalidBootSignature;
     }
@@ -102,10 +104,11 @@ pub fn main(args: []usize) !void {
     scache.init();
 
     // Allocate and map a stack for the worker thread.
+    const page_size = std.heap.pageSize();
     const stack_pages = 16;
     const stack_handle = try syscall.regionAllocate(.self, stack_pages, .{ .read = true, .write = true }, null);
-    const stack_start: [*]align(mem.page_size) u8 = @ptrCast(try syscall.regionMap(.self, stack_handle, null));
-    const stack_end = stack_start + stack_pages * mem.page_size;
+    const stack_start: [*]align(page_size) u8 = @ptrCast(try syscall.regionMap(.self, stack_handle, null));
+    const stack_end = stack_start + stack_pages * page_size;
 
     const worker_handle = try syscall.threadAllocate(.self, .self, &worker, stack_end, @intFromPtr(&allocator), 0, 0);
     _ = worker_handle;
@@ -126,7 +129,7 @@ fn readSector(sector: Sector, buf: *[fat.sector_size]u8) !void {
         return error.Failed;
 }
 
-fn worker(allocator: *Allocator) void {
+fn worker(allocator: *Allocator) callconv(.c) void {
     while (true) {
         var request: Client.Request = undefined;
         var client: *Client = undefined;

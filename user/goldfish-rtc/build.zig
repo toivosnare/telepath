@@ -11,16 +11,11 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    const exe = libt.addTelepathExecutable(b, .{
-        .name = "goldfish-rtc",
-        .root_source_file = b.path("main.zig"),
-        .target = target,
-        .optimize = optimize,
-    }, &[_]libt.ServiceOptions{
+    const exe = libt.addTelepathExecutable(b, "goldfish-rtc", b.path("main.zig"), target, optimize, &[_]libt.ServiceOptions{
         .{ .name = "serial_driver", .service = service.SerialDriver },
         .{ .name = "client", .service = service.RtcDriver, .mode = .provide },
     });
-    exe.root_module.addImport("zig-datetime", @"zig-datetime".module("zig-datetime"));
+    exe.root_module.addImport("datetime", @"zig-datetime".module("datetime"));
 
     b.installArtifact(exe);
 }

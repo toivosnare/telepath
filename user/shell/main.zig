@@ -16,6 +16,9 @@ comptime {
     _ = libt;
 }
 
+pub const std_options = libt.std_options;
+const page_size = std.heap.pageSize();
+
 pub fn main(args: []usize) !void {
     const serial_driver = services.serial_driver;
     const writer = serial_driver.tx.writer();
@@ -162,7 +165,7 @@ fn ls(
     writer: anytype,
     root_directory: *Directory,
     shared_buf_handle: Handle,
-    buf_ptr: *align(mem.page_size) anyopaque,
+    buf_ptr: *align(page_size) anyopaque,
     file_system_handle: Handle,
 ) !void {
     const path = it.next() orelse "/";
@@ -174,7 +177,7 @@ fn ls(
 
     var entries_read: usize = 0;
     while (true) {
-        const entries_to_read = mem.page_size / @sizeOf(Directory.Entry) - entries_read;
+        const entries_to_read = page_size / @sizeOf(Directory.Entry) - entries_read;
         const n = directory.read(shared_buf_handle, entries_read, entries_to_read);
         if (n == 0)
             break;
@@ -208,7 +211,7 @@ fn cat(
     writer: anytype,
     root_directory: *Directory,
     shared_buf_handle: Handle,
-    buf_ptr: *align(mem.page_size) anyopaque,
+    buf_ptr: *align(page_size) anyopaque,
     file_system_handle: Handle,
 ) !void {
     const path = it.next() orelse return;
@@ -220,7 +223,7 @@ fn cat(
 
     var bytes_read: usize = 0;
     while (true) {
-        const bytes_to_read = mem.page_size - bytes_read;
+        const bytes_to_read = page_size - bytes_read;
         const n = file.read(shared_buf_handle, bytes_read, bytes_to_read);
         if (n == 0)
             break;

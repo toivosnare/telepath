@@ -2,6 +2,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const math = std.math;
 const mem = std.mem;
+const heap = std.heap;
 const libt = @import("../root.zig");
 const syscall = libt.syscall;
 const DateTime = libt.service.RtcDriver.DateTime;
@@ -180,7 +181,7 @@ pub fn open(self: *Directory, path_offset: usize, path_length: usize, handle: Ha
 }
 
 pub fn openDirectory(self: *Directory, path: []const u8, fs_handle: Handle) !*Directory {
-    const size = math.divCeil(usize, @sizeOf(Directory), mem.page_size) catch unreachable;
+    const size = math.divCeil(usize, @sizeOf(Directory), heap.pageSize()) catch unreachable;
     const handle = try syscall.regionAllocate(.self, size, .{ .read = true, .write = true }, null);
     errdefer syscall.regionFree(.self, handle) catch {};
     const shared_handle = try syscall.regionShare(.self, handle, fs_handle, .{ .read = true, .write = true });
@@ -193,7 +194,7 @@ pub fn openDirectory(self: *Directory, path: []const u8, fs_handle: Handle) !*Di
 }
 
 pub fn openFile(self: *Directory, path: []const u8, fs_handle: Handle) !*File {
-    const size = math.divCeil(usize, @sizeOf(File), mem.page_size) catch unreachable;
+    const size = math.divCeil(usize, @sizeOf(File), heap.pageSize()) catch unreachable;
     const handle = try syscall.regionAllocate(.self, size, .{ .read = true, .write = true }, null);
     errdefer syscall.regionFree(.self, handle) catch {};
     const shared_handle = try syscall.regionShare(.self, handle, fs_handle, .{ .read = true, .write = true });

@@ -30,19 +30,33 @@ pub const ServiceOptions = struct {
 };
 pub fn addTelepathExecutable(
     b: *Build,
-    executable_options: Build.ExecutableOptions,
+    name: []const u8,
+    root_source_file: Build.LazyPath,
+    target: Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
     service_options: []const ServiceOptions,
 ) *Step.Compile {
-    const dependency = b.dependency("libt", .{
-        .target = executable_options.target,
-        .optimize = executable_options.optimize,
+    const libt = b.dependency("libt", .{
+        .target = target,
+        .optimize = optimize,
         .include_entry_point = true,
     });
+    const libt_module = libt.module("libt");
 
-    const exe = b.addExecutable(executable_options);
-    const module = dependency.module("libt");
-    exe.root_module.addImport("libt", module);
-    addServices(exe, service_options, module);
+    const root_module = b.createModule(.{
+        .root_source_file = root_source_file,
+        .imports = &[_]Build.Module.Import{.{
+            .name = "libt",
+            .module = libt_module,
+        }},
+        .target = target,
+        .optimize = optimize,
+    });
+    const exe = b.addExecutable(.{
+        .name = name,
+        .root_module = root_module,
+    });
+    addServices(exe, service_options, libt_module);
     return exe;
 }
 

@@ -234,5 +234,5 @@ pub fn freeThread(thread: *Thread) void {
 
 // Black magic.
 pub fn threadFromWaitReason(wait_reason: *Thread.WaitReason) *Thread {
-    return @ptrFromInt(mem.alignBackwardAnyAlign(@intFromPtr(wait_reason) - @intFromPtr(&thread_table[0]), @sizeOf(ThreadTableSlot)) + @intFromPtr(&thread_table[0]));
+    return @ptrFromInt(mem.alignBackwardAnyAlign(usize, @intFromPtr(wait_reason) - @intFromPtr(&thread_table[0]), @sizeOf(ThreadTableSlot)) + @intFromPtr(&thread_table[0]));
 }

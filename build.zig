@@ -5,24 +5,18 @@ const Step = Build.Step;
 pub fn build(b: *Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
-    const kernel_package = b.dependency("kernel", .{
-        .optimize = optimize,
-    });
+    const kernel_package = b.dependency("kernel", .{ .optimize = optimize });
     const kernel = kernel_package.artifact("kernel");
     b.installArtifact(kernel);
 
-    const init_package = b.dependency("init", .{
-        .optimize = optimize,
-    });
+    const init_package = b.dependency("init", .{ .optimize = optimize });
     const init_elf = init_package.artifact("init.elf");
     for (init_package.builder.getInstallStep().dependencies.items) |step| {
         const install_step = step.cast(Step.InstallArtifact) orelse continue;
         b.installArtifact(install_step.artifact);
     }
 
-    const elf2tix_package = b.dependency("elf2tix", .{
-        .optimize = optimize,
-    });
+    const elf2tix_package = b.dependency("elf2tix", .{ .optimize = optimize });
     const elf2tix = elf2tix_package.artifact("elf2tix");
     b.installArtifact(elf2tix);
 

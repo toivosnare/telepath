@@ -1,7 +1,8 @@
 .{
-    .name = "kernel",
+    .name = .kernel,
     .version = "0.0.0",
-    .minimum_zig_version = "0.11.0",
+    .fingerprint = 0x5dd29aabb4c3ac51,
+    .minimum_zig_version = "0.14.0",
     .dependencies = .{
         .@"dtb.zig" = .{
             .url = "git+https://github.com/toivosnare/dtb.zig.git#60836cb6b61d2f8d51712b7bc193d564fcb240a5",
@@ -11,15 +12,24 @@
             .path = "../libt",
         },
         .@"zig-sbi" = .{
-            .url = "git+https://github.com/toivosnare/zig-sbi.git#9f459fdd42d45923c21f1d98ce968ad096493548",
-            .hash = "12209edfc23734cdbcf4fe46938826a8488fe1cd6a93929122e77846160c0390dbd1",
+            .url = "git+https://github.com/toivosnare/zig-sbi.git#master",
+            .hash = "sbi-5.0.0-Muvb-urtAQCZT-a4wpNDbYZu159J-2l_KJBkXy8SyhXb",
         },
     },
     .paths = .{
         "build.zig",
         "build.zig.zon",
-        "src/entry.s",
-        "src/kernel.ld",
-        "src/main.zig",
+        "entry.S",
+        "entry.zig",
+        "fdt.zig",
+        "kernel.ld",
+        "main.zig",
+        "mm",
+        "mm.zig",
+        "proc",
+        "proc.zig",
+        "riscv.zig",
+        "trap",
+        "trap.zig",
     },
 }

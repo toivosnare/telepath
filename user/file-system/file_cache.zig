@@ -1,6 +1,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const mem = std.mem;
+const heap = std.heap;
 const unicode = std.unicode;
 const Wyhash = std.hash.Wyhash;
 const libt = @import("libt");
@@ -390,7 +391,7 @@ pub const Entry = struct {
 
     pub fn readdir(self: *Entry, seek_offset: *usize, region_handle: Handle, region_offset: usize, n: usize) usize {
         const region_size = syscall.regionSize(.self, region_handle) catch return 0;
-        if (region_size * mem.page_size < (region_offset + n) * @sizeOf(service.Directory.Entry))
+        if (region_size * heap.pageSize() < (region_offset + n) * @sizeOf(service.Directory.Entry))
             return 0;
 
         const region_ptr = syscall.regionMap(.self, region_handle, null) catch return 0;

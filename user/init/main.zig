@@ -12,7 +12,9 @@ const service = libt.service;
 const Handle = libt.Handle;
 
 pub const os = libt;
+pub const std_options = libt.std_options;
 
+const page_size = heap.pageSize();
 const stack_size = 0x10;
 const DriverMap = std.StringHashMap([]const u8);
 const ServiceMap = std.AutoHashMap(u32, ServiceProvider);
@@ -22,9 +24,9 @@ const ServiceProvider = struct {
     region: Handle,
 };
 
-export fn _start() callconv(.Naked) noreturn {
+export fn _start() callconv(.naked) noreturn {
     // Save FDT address.
-    asm volatile ("mv s0, a0");
+    // asm volatile ("mv t4, a0");
 
     // Allocate and map stack, jump to main.
     asm volatile (
@@ -36,14 +38,14 @@ export fn _start() callconv(.Naked) noreturn {
         \\ecall
         \\bltz a0, 1f
         \\mv sp, %[stack_address]
+        \\mv s0, sp
         \\mul a3, a2, %[page_size]
         \\sub a3, sp, a3
-        // \\li a1, 0
         \\mv a2, a0
         \\li a0, %[map_id]
         \\ecall
         \\bltz a0, 1f
-        \\mv a0, s0
+        // \\mv a0, t4
         \\jalr %[main]
         \\1:
         \\mv a1, a0
@@ -54,7 +56,7 @@ export fn _start() callconv(.Naked) noreturn {
           [stack_size] "I" (stack_size),
           [stack_permissions] "I" (syscall.RegionPermissions{ .read = true, .write = true }),
           [stack_address] "{t1}" (libt.address_space_end),
-          [page_size] "{t2}" (mem.page_size),
+          [page_size] "{t2}" (page_size),
           [map_id] "I" (@intFromEnum(syscall.Id.region_map)),
           [main] "{t3}" (&main),
           [exit_id] "I" (@intFromEnum(syscall.Id.exit)),
@@ -132,8 +134,8 @@ fn loadElf(elf_bytes: []const u8, service_map: *ServiceMap) !Handle {
 
     // Allocate a stack for the process.
     const region = try syscall.regionAllocate(process, stack_size, .{ .read = true, .write = true }, null);
-    const stack_end: [*]align(mem.page_size) u8 = @ptrFromInt(libt.address_space_end);
-    const stack_start: [*]align(mem.page_size) u8 = stack_end - stack_size * mem.page_size;
+    const stack_end: [*]align(page_size) u8 = @ptrFromInt(libt.address_space_end);
+    const stack_start: [*]align(page_size) u8 = stack_end - stack_size * page_size;
     _ = try syscall.regionMap(process, region, stack_start);
 
     const args_slice = args.constSlice();
@@ -144,9 +146,9 @@ fn loadElf(elf_bytes: []const u8, service_map: *ServiceMap) !Handle {
 }
 
 fn handleLoadSegment(process: Handle, header: elf.Elf64_Phdr, elf_bytes: []const u8) !void {
-    const start_address = mem.alignBackward(usize, header.p_vaddr, mem.page_size);
-    const end_address = mem.alignForward(usize, header.p_vaddr + header.p_memsz, mem.page_size);
-    const size = (end_address - start_address) / mem.page_size;
+    const start_address = mem.alignBackward(usize, header.p_vaddr, page_size);
+    const end_address = mem.alignForward(usize, header.p_vaddr + header.p_memsz, page_size);
+    const size = (end_address - start_address) / page_size;
     const permissions: syscall.RegionPermissions = .{
         .read = header.p_flags & elf.PF_R != 0,
         .write = header.p_flags & elf.PF_W != 0,
@@ -157,14 +159,14 @@ fn handleLoadSegment(process: Handle, header: elf.Elf64_Phdr, elf_bytes: []const
     _ = try syscall.regionMap(process, region, @ptrFromInt(start_address));
 
     const source = elf_bytes.ptr + header.p_offset;
-    const offset = header.p_vaddr % mem.page_size;
+    const offset = header.p_vaddr % page_size;
     try syscall.regionWrite(process, region, source, offset, header.p_filesz);
 }
 
 fn handleServiceSegment(process: Handle, header: elf.Elf64_Phdr, service_map: *ServiceMap, args: *std.BoundedArray(Handle, 3)) !void {
-    const start_address = mem.alignBackward(usize, header.p_vaddr, mem.page_size);
-    const end_address = mem.alignForward(usize, header.p_vaddr + header.p_memsz, mem.page_size);
-    const size = (end_address - start_address) / mem.page_size;
+    const start_address = mem.alignBackward(usize, header.p_vaddr, page_size);
+    const end_address = mem.alignForward(usize, header.p_vaddr + header.p_memsz, page_size);
+    const size = (end_address - start_address) / page_size;
     const permissions: syscall.RegionPermissions = .{
         .read = header.p_flags & elf.PF_R != 0,
         .write = header.p_flags & elf.PF_W != 0,
