@@ -81,6 +81,8 @@ pub const PageTable = struct {
     pub fn translate(self: Ptr, virtual: VirtualAddress) !PhysicalAddress {
         const page: ConstPagePtr = @ptrFromInt(mem.alignBackward(VirtualAddress, virtual, @sizeOf(Page)));
         const pte = try self.walk(page, false);
+        if (!pte.permissions.valid)
+            return error.NotMapped;
         const page_frame = pte.physical_page_number.toPageFrame();
         const page_offset = virtual % @sizeOf(Page);
         return @intFromPtr(page_frame) + page_offset;
