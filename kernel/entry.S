@@ -79,6 +79,7 @@ handleTrap:
 	addi t1, a1, 1
 	mul t0, t0, t1
 	add sp, sp, t0
+	csrwi sscratch, 0
 	j handleTrap2
 
 .global returnToUserspace
