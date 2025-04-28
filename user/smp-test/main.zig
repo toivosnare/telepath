@@ -1,13 +1,16 @@
 const page_size = @import("std").heap.pageSize();
 const libt = @import("libt");
+const service = libt.service;
 const syscall = libt.syscall;
+
+pub const std_options = libt.std_options;
 
 comptime {
     _ = libt;
 }
 
-const services = @import("services");
-const writer = services.serial.tx.writer();
+extern var serial: service.SerialDriver;
+const writer = serial.tx.writer();
 
 pub fn main(args: []usize) !void {
     _ = args;
@@ -23,7 +26,7 @@ pub fn main(args: []usize) !void {
     try writeInLoop('A', 1_000_000);
 }
 
-fn writeInLoop(letter: u8, delay: usize) noreturn {
+fn writeInLoop(letter: u8, delay: usize) callconv(.c) noreturn {
     libt.sleep(delay / 2) catch unreachable;
 
     while (true) {

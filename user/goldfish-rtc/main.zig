@@ -5,13 +5,15 @@ const syscall = libt.syscall;
 const service = libt.service;
 const Channel = service.Channel;
 const RtcDriver = service.RtcDriver;
-const services = @import("services");
+
+pub const std_options = libt.std_options;
 
 comptime {
     _ = libt;
 }
 
-pub const std_options = libt.std_options;
+extern var serial: service.SerialDriver;
+extern var client: Client;
 
 const GoldfishRtc = extern struct {
     time_low: u32,
@@ -38,9 +40,7 @@ const Client = extern struct {
 pub fn main(args: []usize) !void {
     _ = args;
 
-    const serial_driver = services.serial_driver;
-    const client: *Client = @ptrCast(services.client);
-    const writer = serial_driver.tx.writer();
+    const writer = serial.tx.writer();
     try writer.writeAll("Initializing goldfish-rtc driver.\n");
 
     const physical_address = 0x101000;

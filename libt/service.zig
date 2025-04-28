@@ -7,12 +7,11 @@ const Keccak = std.crypto.hash.sha3.Keccak(1600, 32, 0x06, 24);
 const libt = @import("root.zig");
 const Mutex = libt.sync.Mutex;
 const Condvar = libt.sync.Condvar;
-
-pub const SerialDriver = @import("service/SerialDriver.zig");
-pub const RtcDriver = @import("service/RtcDriver.zig");
-pub const BlockDriver = @import("service/BlockDriver.zig");
-pub const Directory = @import("service/Directory.zig");
-pub const File = @import("service/File.zig");
+pub const SerialDriver = @import("service/serial_driver.zig").SerialDriver;
+pub const RtcDriver = @import("service/rtc_driver.zig").RtcDriver;
+pub const BlockDriver = @import("service/block_driver.zig").BlockDriver;
+pub const Directory = @import("service/directory.zig").Directory;
+pub const File = @import("service/file.zig").File;
 
 pub fn hash(comptime Service: type) u32 {
     var result: u32 = undefined;

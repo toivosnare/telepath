@@ -5,27 +5,26 @@ const io = std.io;
 const mem = std.mem;
 const math = std.math;
 const libt = @import("libt");
+const service = libt.service;
 const syscall = libt.syscall;
 const Handle = libt.Handle;
-const BlockDriver = libt.service.BlockDriver;
-const Directory = libt.service.Directory;
-const File = libt.service.File;
-const services = @import("services");
+
+pub const std_options = libt.std_options;
 
 comptime {
     _ = libt;
 }
 
-pub const std_options = libt.std_options;
+extern var serial_driver: service.SerialDriver;
+extern var block_driver: service.BlockDriver;
+extern var root_directory: service.Directory;
+extern var rtc_driver: service.RtcDriver;
+
 const page_size = std.heap.pageSize();
 
 pub fn main(args: []usize) !void {
-    const serial_driver = services.serial_driver;
     const writer = serial_driver.tx.writer();
     const reader = serial_driver.rx.reader();
-    const block_driver = services.block_driver;
-    const root_directory = services.root_directory;
-    const rtc_driver = services.rtc_driver;
 
     const file_system_handle: Handle = @enumFromInt(args[2]);
     if (file_system_handle == .self) {
@@ -79,15 +78,15 @@ pub fn main(args: []usize) !void {
             try writer.writeAll(it.rest());
             try writer.writeByte('\n');
         } else if (mem.eql(u8, verb, "read")) {
-            try read(&it, writer, block_driver);
+            try read(&it, writer);
         } else if (mem.eql(u8, verb, "write")) {
-            try write(&it, writer, block_driver);
+            try write(&it, writer);
         } else if (mem.eql(u8, verb, "ls")) {
-            try ls(&it, writer, root_directory, shared_buf_handle, buf_ptr, file_system_handle);
+            try ls(&it, writer, shared_buf_handle, buf_ptr, file_system_handle);
         } else if (mem.eql(u8, verb, "cat")) {
-            try cat(&it, writer, root_directory, shared_buf_handle, buf_ptr, file_system_handle);
+            try cat(&it, writer, shared_buf_handle, buf_ptr, file_system_handle);
         } else if (mem.eql(u8, verb, "sync")) {
-            try sync(&it, writer, root_directory);
+            try sync(&it, writer);
         } else if (mem.eql(u8, verb, "exit")) {
             break;
         } else {
@@ -96,7 +95,7 @@ pub fn main(args: []usize) !void {
     }
 }
 
-fn read(it: *mem.SplitIterator(u8, .scalar), writer: anytype, block_driver: *BlockDriver) !void {
+fn read(it: *mem.SplitIterator(u8, .scalar), writer: anytype) !void {
     const sector_index_string = it.next() orelse {
         try writer.writeAll("Expected sector number\n");
         return;
@@ -124,7 +123,7 @@ fn read(it: *mem.SplitIterator(u8, .scalar), writer: anytype, block_driver: *Blo
     }
 }
 
-fn write(it: *mem.SplitIterator(u8, .scalar), writer: anytype, block_driver: *BlockDriver) !void {
+fn write(it: *mem.SplitIterator(u8, .scalar), writer: anytype) !void {
     const sector_index_string = it.next() orelse {
         try writer.writeAll("Expected sector number\n");
         return;
@@ -163,7 +162,6 @@ fn write(it: *mem.SplitIterator(u8, .scalar), writer: anytype, block_driver: *Bl
 fn ls(
     it: *mem.SplitIterator(u8, .scalar),
     writer: anytype,
-    root_directory: *Directory,
     shared_buf_handle: Handle,
     buf_ptr: *align(page_size) anyopaque,
     file_system_handle: Handle,
@@ -177,14 +175,14 @@ fn ls(
 
     var entries_read: usize = 0;
     while (true) {
-        const entries_to_read = page_size / @sizeOf(Directory.Entry) - entries_read;
+        const entries_to_read = page_size / @sizeOf(service.Directory.Entry) - entries_read;
         const n = directory.read(shared_buf_handle, entries_read, entries_to_read);
         if (n == 0)
             break;
         entries_read += n;
     }
 
-    var entries: []Directory.Entry = undefined;
+    var entries: []service.Directory.Entry = undefined;
     entries.ptr = @ptrCast(buf_ptr);
     entries.len = entries_read;
 
@@ -209,7 +207,6 @@ fn ls(
 fn cat(
     it: *mem.SplitIterator(u8, .scalar),
     writer: anytype,
-    root_directory: *Directory,
     shared_buf_handle: Handle,
     buf_ptr: *align(page_size) anyopaque,
     file_system_handle: Handle,
@@ -239,7 +236,6 @@ fn cat(
 fn sync(
     it: *mem.SplitIterator(u8, .scalar),
     writer: anytype,
-    root_directory: *Directory,
 ) !void {
     _ = it;
     _ = writer;

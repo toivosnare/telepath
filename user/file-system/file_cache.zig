@@ -10,11 +10,11 @@ const Handle = libt.Handle;
 const service = libt.service;
 const DateTime = service.RtcDriver.DateTime;
 const Spinlock = libt.sync.Spinlock;
-const services = @import("services");
-const rtc = services.rtc;
 const scache = @import("sector_cache.zig");
 const fat = @import("fat.zig");
 const Sector = fat.Sector;
+
+extern var rtc: service.RtcDriver;
 
 pub const Entry = struct {
     start_sector: ?Sector,

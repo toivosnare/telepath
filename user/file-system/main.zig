@@ -5,6 +5,7 @@ const math = std.math;
 const mem = std.mem;
 const Allocator = mem.Allocator;
 const libt = @import("libt");
+const service = libt.service;
 const syscall = libt.syscall;
 const WaitReason = syscall.WaitReason;
 const scache = @import("sector_cache.zig");
@@ -12,7 +13,6 @@ const fcache = @import("file_cache.zig");
 const fat = @import("fat.zig");
 const Sector = fat.Sector;
 const Client = @import("Client.zig");
-const services = @import("services");
 
 pub const os = libt;
 pub const std_options: std.Options = .{
@@ -26,7 +26,11 @@ comptime {
     _ = libt;
 }
 
-const writer = services.serial.tx.writer();
+extern var serial: service.SerialDriver;
+extern var root_directory_region: service.Directory;
+extern var block: service.BlockDriver;
+
+const writer = serial.tx.writer();
 var clients_head: ?*Client = null;
 var clients_tail: ?*Client = null;
 var clients_len: u32 = 0;
@@ -96,7 +100,7 @@ pub fn main(args: []usize) !void {
     const root_fcache_entry = fcache.init(root_directory_sector, allocator);
     const root_client = try allocator.create(Client);
     root_client.* = .{ .kind = .{ .directory = .{
-        .region = @ptrCast(services.client),
+        .region = @ptrCast(&root_directory_region),
         .root_directory = root_fcache_entry,
     } } };
     addClient(root_client);
@@ -118,13 +122,13 @@ pub fn main(args: []usize) !void {
 
 fn readSector(sector: Sector, buf: *[fat.sector_size]u8) !void {
     const physical_address = try syscall.processTranslate(.self, buf);
-    services.block.request.write(.{
+    block.request.write(.{
         .sector_index = sector,
         .address = @intFromPtr(physical_address),
         .write = false,
         .token = 0,
     });
-    const response = services.block.response.read();
+    const response = block.response.read();
     if (!response.success)
         return error.Failed;
 }

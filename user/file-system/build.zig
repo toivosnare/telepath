@@ -10,7 +10,7 @@ pub fn build(b: *std.Build) void {
         .{ .name = "serial", .service = service.SerialDriver },
         .{ .name = "rtc", .service = service.RtcDriver },
         .{ .name = "block", .service = service.BlockDriver },
-        .{ .name = "client", .service = service.Directory, .mode = .provide },
+        .{ .name = "root_directory_region", .service = service.Directory, .mode = .provide },
     });
 
     b.installArtifact(exe);

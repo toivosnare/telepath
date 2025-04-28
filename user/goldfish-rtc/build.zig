@@ -12,7 +12,7 @@ pub fn build(b: *std.Build) void {
     });
 
     const exe = libt.addTelepathExecutable(b, "goldfish-rtc", b.path("main.zig"), target, optimize, &[_]libt.ServiceOptions{
-        .{ .name = "serial_driver", .service = service.SerialDriver },
+        .{ .name = "serial", .service = service.SerialDriver },
         .{ .name = "client", .service = service.RtcDriver, .mode = .provide },
     });
     exe.root_module.addImport("datetime", @"zig-datetime".module("datetime"));

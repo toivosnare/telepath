@@ -3,13 +3,16 @@ const assert = std.debug.assert;
 const math = std.math;
 const mem = std.mem;
 const libt = @import("libt");
+const service = libt.service;
 const syscall = libt.syscall;
+
+pub const std_options = libt.std_options;
 
 comptime {
     _ = libt;
 }
 
-pub const std_options = libt.std_options;
+extern var client: service.SerialDriver;
 
 const Ns16550A = packed struct {
     rbr_thr: u8,
@@ -163,7 +166,6 @@ pub fn main(args: []usize) usize {
     const ns16550a: *volatile Ns16550A = @ptrCast(syscall.regionMap(.self, region, null) catch unreachable);
     ns16550a.init();
 
-    const client = @import("services").client;
     const tx_channel = &client.tx;
     const rx_channel = &client.rx;
     const tx_capacity = @typeInfo(@TypeOf(tx_channel)).pointer.child.capacity;

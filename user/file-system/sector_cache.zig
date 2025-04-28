@@ -2,12 +2,13 @@ const std = @import("std");
 const log = std.log;
 const math = std.math;
 const libt = @import("libt");
+const service = libt.service;
 const syscall = libt.syscall;
 const Spinlock = libt.sync.Spinlock;
 const fat = @import("fat.zig");
 const Sector = fat.Sector;
-const services = @import("services");
-const block = services.block;
+
+extern var block: service.BlockDriver;
 
 const n = 8;
 const hash_bucket_count = 1 << n;

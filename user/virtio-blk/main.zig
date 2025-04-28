@@ -9,13 +9,15 @@ const Channel = service.Channel;
 const BlockDriver = service.BlockDriver;
 const virtio = @import("virtio.zig");
 const Status = virtio.MmioRegisters.Status;
-const services = @import("services");
+
+pub const std_options = libt.std_options;
 
 comptime {
     _ = libt;
 }
 
-pub const std_options = libt.std_options;
+extern var serial: service.SerialDriver;
+extern var client: Client;
 
 const Config = extern struct {
     capacity: u64,
@@ -114,7 +116,7 @@ var requests_physical_address: usize = undefined;
 
 pub fn main(args: []usize) !usize {
     _ = args;
-    const writer = services.serial.tx.writer();
+    const writer = serial.tx.writer();
     try writer.writeAll("Initializing virtio-blk driver.\n");
 
     const physical_address = 0x10008000;
@@ -190,7 +192,6 @@ pub fn main(args: []usize) !usize {
 
     requests_physical_address = @intFromPtr(syscall.processTranslate(.self, &requests) catch unreachable);
 
-    const client: *Client = @ptrCast(services.client);
     const request_channel = &client.request;
     const response_channel = &client.response;
     const request_channel_index = 0;

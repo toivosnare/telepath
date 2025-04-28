@@ -56,43 +56,8 @@ pub fn addTelepathExecutable(
         .name = name,
         .root_module = root_module,
     });
-    addServices(exe, service_options, libt_module);
+    exe.linker_script = generateLinkerScript(exe, service_options);
     return exe;
-}
-
-fn addServices(exe: *Step.Compile, options: []const ServiceOptions, libt_module: *Build.Module) void {
-    exe.linker_script = generateLinkerScript(exe, options);
-    const b = exe.step.owner;
-    const service_module = b.createModule(.{
-        .root_source_file = generateServiceFile(exe, options),
-        .target = exe.root_module.resolved_target,
-        .optimize = exe.root_module.optimize,
-    });
-    service_module.addImport("libt", libt_module);
-    exe.root_module.addImport("services", service_module);
-}
-
-fn generateServiceFile(exe: *Step.Compile, options: []const ServiceOptions) Build.LazyPath {
-    var arena = heap.ArenaAllocator.init(heap.page_allocator);
-    defer arena.deinit();
-
-    var buffer = ArrayList(u8).init(arena.allocator());
-    defer buffer.deinit();
-    var writer = buffer.writer();
-
-    writer.writeAll("const service = @import(\"libt\").service;\n") catch @panic("OOM");
-    inline for (options) |option| {
-        writer.print(
-            \\extern var @"{0s}_start": anyopaque;
-            \\pub const @"{0s}": *{1s} = @alignCast(@ptrCast(&@"{0s}_start"));
-            \\
-        , .{ option.name, @typeName(option.service) }) catch @panic("OOM");
-    }
-
-    const b = exe.step.owner;
-    const service_file_step = b.addWriteFiles();
-    exe.step.dependOn(&service_file_step.step);
-    return service_file_step.add("services.zig", buffer.items);
 }
 
 fn generateLinkerScript(exe: *Step.Compile, options: []const ServiceOptions) Build.LazyPath {
@@ -134,7 +99,7 @@ fn generateLinkerScript(exe: *Step.Compile, options: []const ServiceOptions) Bui
         const page_size = 4096;
         const service_size = mem.alignForward(usize, @sizeOf(option.service), page_size);
         writer.print(
-            ".{0s} (TYPE = SHT_NOBITS) : ALIGN(0x1000) {{ {0s}_start = .; . += 0x{1x}; }} :{0s}\n",
+            ".{0s} (TYPE = SHT_NOBITS) : ALIGN(0x1000) {{ {0s} = .; . += 0x{1x}; }} :{0s}\n",
             .{ option.name, service_size },
         ) catch @panic("OOM");
     }
