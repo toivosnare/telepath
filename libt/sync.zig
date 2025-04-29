@@ -24,7 +24,7 @@ pub const Mutex = extern struct {
         @branchHint(.cold);
 
         while (self.state.swap(contended, .acquire) != unlocked) {
-            libt.waitFutex(&self.state, contended, math.maxInt(usize)) catch |err| switch (err) {
+            libt.waitFutex(&self.state, contended, null) catch |err| switch (err) {
                 error.WouldBlock => {},
                 else => unreachable,
             };
@@ -33,7 +33,7 @@ pub const Mutex = extern struct {
 
     pub fn unlock(self: *Mutex) void {
         if (self.state.swap(unlocked, .release) == contended)
-            _ = syscall.wake(&self.state, 1) catch unreachable;
+            _ = libt.wake(&self.state, 1) catch unreachable;
     }
 };
 
@@ -44,7 +44,7 @@ pub const Condvar = extern struct {
         const old_state = self.state.load(.monotonic);
 
         mutex.unlock();
-        libt.waitFutex(&self.state, old_state, math.maxInt(usize)) catch |err| switch (err) {
+        libt.waitFutex(&self.state, old_state, null) catch |err| switch (err) {
             error.WouldBlock => {},
             else => unreachable,
         };
@@ -60,7 +60,7 @@ pub const Condvar = extern struct {
         }
 
         const count_int: usize = if (count == .one) 1 else math.maxInt(usize);
-        _ = syscall.wake(&self.state, count_int) catch unreachable;
+        _ = libt.wake(&self.state, count_int) catch unreachable;
     }
 };
 

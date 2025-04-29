@@ -161,8 +161,8 @@ fn getRequest(request_out: *Client.Request, client_out: **Client, allocator: All
             i += 1;
         }
 
-        const client_index = syscall.wait(wait_reasons, math.maxInt(usize)) catch @panic("wait error");
-        syscall.unpackResult(syscall.WaitError!void, wait_reasons[client_index].result) catch |err| switch (err) {
+        const client_index = libt.waitMultiple(wait_reasons, null) catch @panic("wait error");
+        syscall.unpackResult(syscall.SynchronizeError!void, wait_reasons[client_index].result) catch |err| switch (err) {
             error.WouldBlock => {},
             else => @panic("wait error"),
         };

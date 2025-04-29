@@ -223,16 +223,16 @@ pub fn main(args: []usize) !usize {
         wait_reasons[request_channel_index].payload.futex.expected_value = old_state;
 
         while (true) {
-            const index = syscall.wait(&wait_reasons, math.maxInt(usize)) catch unreachable;
+            const index = libt.waitMultiple(&wait_reasons, null) catch unreachable;
             if (index == request_channel_index) {
-                syscall.unpackResult(syscall.WaitError!void, wait_reasons[request_channel_index].result) catch |err| switch (err) {
+                syscall.unpackResult(syscall.SynchronizeError!void, wait_reasons[request_channel_index].result) catch |err| switch (err) {
                     error.WouldBlock => {},
                     else => @panic("wait errror"),
                 };
                 continue :outer;
             } else {
                 assert(index == interrupt_index);
-                assert(syscall.unpackResult(syscall.WaitError!usize, wait_reasons[interrupt_index].result) catch 1 == 0);
+                assert(syscall.unpackResult(syscall.SynchronizeError!usize, wait_reasons[interrupt_index].result) catch 1 == 0);
 
                 regs.interrupt_acknowledge = @bitCast(regs.interrupt_status);
                 syscall.ack(interrupt_source) catch unreachable;

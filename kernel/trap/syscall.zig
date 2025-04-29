@@ -234,28 +234,28 @@ pub fn exit(thread: *Thread) noreturn {
     proc.scheduler.scheduleNext(null, hart_index);
 }
 
-pub const WaitError = syscall.WaitError;
-pub fn wait(thread: *Thread) WaitError!usize {
-    log.debug("wait", .{});
-    const reasons_count = thread.context.a1;
-    const reasons_int = thread.context.a2;
-    const timeout_us = thread.context.a3;
+pub const SynchronizeError = syscall.SynchronizeError;
+pub fn synchronize(thread: *Thread) SynchronizeError!usize {
+    log.debug("synchronize", .{});
+    const signals_count = thread.context.a1;
+    const signals_int = thread.context.a2;
+    const events_count = thread.context.a3;
+    const events_int = thread.context.a4;
+    const timeout_us = thread.context.a5;
 
-    const reasons_start: ?[*]libt.syscall.WaitReason = @ptrFromInt(reasons_int);
-    const reasons: []libt.syscall.WaitReason = if (reasons_start) |start|
-        start[0..reasons_count]
+    const signals_start: ?[*]libt.syscall.WakeSignal = @ptrFromInt(signals_int);
+    const signals: []libt.syscall.WakeSignal = if (signals_start) |start|
+        start[0..signals_count]
     else
         &.{};
 
-    return thread.wait(reasons, timeout_us);
-}
+    const events_start: ?[*]libt.syscall.WaitReason = @ptrFromInt(events_int);
+    const events: []libt.syscall.WaitReason = if (events_start) |start|
+        start[0..events_count]
+    else
+        &.{};
 
-pub const WakeError = syscall.WakeError;
-pub fn wake(thread: *Thread) WakeError!usize {
-    log.debug("wake", .{});
-    const address = thread.context.a1;
-    const waiter_count = thread.context.a2;
-    return thread.wake(address, waiter_count);
+    return thread.synchronize(signals, events, timeout_us);
 }
 
 pub const AckError = syscall.AckError;

@@ -138,7 +138,7 @@ pub fn get(sector: Sector) *Entry {
         var state = e.state;
         while (state == .fetching1 or state == .fetching2) : (state = e.state) {
             lock.unlock();
-            libt.waitFutex(@ptrCast(&e.state), @intFromEnum(state), math.maxInt(usize)) catch @panic("wait error");
+            libt.waitFutex(@ptrCast(&e.state), @intFromEnum(state), null) catch @panic("wait error");
             lock.lock();
         }
 
@@ -167,7 +167,7 @@ pub fn get(sector: Sector) *Entry {
             .write = true,
             .token = @intFromPtr(evided_entry),
         });
-        libt.waitFutex(@ptrCast(&evided_entry.state), @intFromEnum(Entry.State.fetching1), math.maxInt(usize)) catch @panic("wait error");
+        libt.waitFutex(@ptrCast(&evided_entry.state), @intFromEnum(Entry.State.fetching1), null) catch @panic("wait error");
     } else {
         evided_entry.state = .fetching2;
         lock.unlock();
@@ -179,7 +179,7 @@ pub fn get(sector: Sector) *Entry {
         .write = false,
         .token = @intFromPtr(evided_entry),
     });
-    libt.waitFutex(@ptrCast(&evided_entry.state), @intFromEnum(Entry.State.fetching2), math.maxInt(usize)) catch @panic("wait error");
+    libt.waitFutex(@ptrCast(&evided_entry.state), @intFromEnum(Entry.State.fetching2), null) catch @panic("wait error");
 
     return evided_entry;
 }
@@ -226,6 +226,6 @@ pub fn loop() noreturn {
         }
         lock.unlock();
 
-        _ = syscall.wake(@ptrCast(&entry.state), math.maxInt(usize)) catch @panic("wake error");
+        _ = libt.wake(@ptrCast(&entry.state), math.maxInt(usize)) catch @panic("wake error");
     }
 }

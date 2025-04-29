@@ -23,9 +23,8 @@ pub const Id = enum(usize) {
     thread_share = 15,
     thread_kill = 16,
     exit = 17,
-    wait = 18,
-    wake = 19,
-    ack = 20,
+    synchronize = 18,
+    ack = 19,
 };
 
 pub const count = @typeInfo(Id).Enum.fields.len;
@@ -61,8 +60,8 @@ pub fn regionFree(owner_process: Handle, target_region: Handle) RegionFreeError!
 }
 
 pub const RegionShareError = error{ InvalidParameter, NoPermission, InvalidType, OutOfMemory };
-pub fn regionShare(target_region_owner_process: Handle, target_region: Handle, recipient_process: Handle, permissions: RegionPermissions) RegionShareError!Handle {
-    return unpackResult(RegionShareError!Handle, syscall4(.region_share, @intFromEnum(target_region_owner_process), @intFromEnum(target_region), @intFromEnum(recipient_process), @bitCast(permissions)));
+pub fn regionShare(owner_process: Handle, target_region: Handle, recipient_process: Handle, permissions: RegionPermissions) RegionShareError!Handle {
+    return unpackResult(RegionShareError!Handle, syscall4(.region_share, @intFromEnum(owner_process), @intFromEnum(target_region), @intFromEnum(recipient_process), @bitCast(permissions)));
 }
 
 pub const RegionMapError = error{ InvalidParameter, NoPermission, InvalidType, Mapped, Reserved };
@@ -120,18 +119,17 @@ pub fn exit(exit_code: usize) noreturn {
     unreachable;
 }
 
-pub const WaitError = error{ InvalidParameter, OutOfMemory, Timeout, WouldBlock };
-pub fn wait(reasons: ?[]WaitReason, timeout_us: usize) WaitError!usize {
+pub const SynchronizeError = error{ InvalidParameter, OutOfMemory, NoPermission, Timeout, WouldBlock };
+pub fn synchronize(signals: ?[]const WakeSignal, reasons: ?[]WaitReason, timeout_us: usize) SynchronizeError!usize {
+    const signals_len, const signals_ptr = if (signals) |s|
+        .{ s.len, @intFromPtr(s.ptr) }
+    else
+        .{ 0, 0 };
     const reasons_len, const reasons_ptr = if (reasons) |r|
         .{ r.len, @intFromPtr(r.ptr) }
     else
         .{ 0, 0 };
-    return unpackResult(WaitError!usize, syscall3(.wait, reasons_len, reasons_ptr, timeout_us));
-}
-
-pub const WakeError = error{InvalidParameter};
-pub fn wake(address: *const atomic.Value(u32), waiter_count: usize) WakeError!usize {
-    return unpackResult(WakeError!usize, syscall2(.wake, @intFromPtr(address), waiter_count));
+    return unpackResult(SynchronizeError!usize, syscall5(.synchronize, signals_len, signals_ptr, reasons_len, reasons_ptr, timeout_us));
 }
 
 pub const AckError = error{InvalidParameter};
@@ -155,6 +153,11 @@ pub const ThreadPermissions = packed struct(u64) {
     wait: bool = false,
     kill: bool = false,
     padding: u62 = 0,
+};
+
+pub const WakeSignal = extern struct {
+    address: *const atomic.Value(u32),
+    count: usize,
 };
 
 pub const WaitReason = extern struct {
@@ -195,10 +198,9 @@ pub const Error = ProcessAllocateError
     || ThreadFreeError
     || ThreadShareError
     || ThreadKillError
-    || WaitError
-    || WakeError
+    || SynchronizeError
     || AckError
-    || error{ Crashed, InvalidParameter, Timeout };
+    || error{ Crashed, InvalidParameter };
 // zig fmt: on
 
 pub fn packResult(result: Error!usize) usize {

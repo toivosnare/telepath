@@ -150,8 +150,7 @@ fn handleSyscall(current_thread: *Thread) noreturn {
         .thread_share => syscall.threadShare(current_thread),
         .thread_kill => syscall.threadKill(current_thread),
         .exit => syscall.exit(current_thread),
-        .wait => syscall.wait(current_thread),
-        .wake => syscall.wake(current_thread),
+        .synchronize => syscall.synchronize(current_thread),
         .ack => syscall.ack(current_thread),
     };
     current_thread.context.a0 = libt.syscall.packResult(result);

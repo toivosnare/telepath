@@ -93,8 +93,10 @@ fn pop() ?*Thread {
             }
             head = h.scheduler_next;
             h.scheduler_next = null;
-            if (h == tail)
+            if (h == tail) {
+                assert(head == null);
                 tail = null;
+            }
             lock.unlock();
             return h;
         } else {
