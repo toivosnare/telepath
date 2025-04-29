@@ -5,7 +5,7 @@ const Allocator = mem.Allocator;
 const libt = @import("libt");
 const service = libt.service;
 const Channel = service.Channel;
-const WaitReason = libt.syscall.WaitReason;
+const WaitEvent = libt.syscall.WaitEvent;
 const main = @import("../main.zig");
 const fcache = @import("../file_cache.zig");
 const Client = @import("../Client.zig");
@@ -23,7 +23,7 @@ const Region = extern struct {
     response: Channel(Response, service.File.channel_capacity, .transmit),
 };
 
-pub fn hasRequest(self: File, request_out: *Client.Request, wait_reason: ?*WaitReason) bool {
+pub fn hasRequest(self: File, request_out: *Client.Request, wait_event: ?*WaitEvent) bool {
     const request_channel = &self.region.request;
     request_channel.mutex.lock();
 
@@ -37,8 +37,8 @@ pub fn hasRequest(self: File, request_out: *Client.Request, wait_reason: ?*WaitR
     const old_state = request_channel.empty.state.load(.monotonic);
     request_channel.mutex.unlock();
 
-    if (wait_reason) |wr|
-        wr.payload = .{ .futex = .{
+    if (wait_event) |we|
+        we.payload = .{ .futex = .{
             .address = &request_channel.empty.state,
             .expected_value = old_state,
         } };

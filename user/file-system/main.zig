@@ -7,7 +7,7 @@ const Allocator = mem.Allocator;
 const libt = @import("libt");
 const service = libt.service;
 const syscall = libt.syscall;
-const WaitReason = syscall.WaitReason;
+const WaitEvent = syscall.WaitEvent;
 const scache = @import("sector_cache.zig");
 const fcache = @import("file_cache.zig");
 const fat = @import("fat.zig");
@@ -143,26 +143,26 @@ fn worker(allocator: *Allocator) callconv(.c) void {
 }
 
 fn getRequest(request_out: *Client.Request, client_out: **Client, allocator: Allocator) void {
-    const wait_reasons = allocator.alloc(WaitReason, clients_len) catch @panic("OOM");
-    defer allocator.free(wait_reasons);
+    const wait_events = allocator.alloc(WaitEvent, clients_len) catch @panic("OOM");
+    defer allocator.free(wait_events);
 
     while (true) {
         var client = clients_head;
         var i: usize = 0;
         while (client) |c| : (client = c.next) {
-            const wait_reason = &wait_reasons[i];
+            const wait_event = &wait_events[i];
 
-            if (c.hasRequest(request_out, wait_reason)) {
+            if (c.hasRequest(request_out, wait_event)) {
                 client_out.* = c;
                 return;
             }
-            wait_reason.tag = .futex;
-            wait_reason.result = 0;
+            wait_event.tag = .futex;
+            wait_event.result = 0;
             i += 1;
         }
 
-        const client_index = libt.waitMultiple(wait_reasons, null) catch @panic("wait error");
-        syscall.unpackResult(syscall.SynchronizeError!void, wait_reasons[client_index].result) catch |err| switch (err) {
+        const client_index = libt.waitMultiple(wait_events, null) catch @panic("wait error");
+        syscall.unpackResult(syscall.SynchronizeError!void, wait_events[client_index].result) catch |err| switch (err) {
             error.WouldBlock => {},
             else => @panic("wait error"),
         };

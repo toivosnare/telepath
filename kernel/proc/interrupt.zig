@@ -8,11 +8,11 @@ const trap = @import("../trap.zig");
 const proc = @import("../proc.zig");
 const Hart = proc.Hart;
 const Thread = proc.Thread;
-const WaitReason = Thread.WaitReason;
+const WaitNode = Thread.WaitNode;
 
 const Bucket = struct {
     lock: Spinlock,
-    head: ?*WaitReason,
+    head: ?*WaitNode,
 };
 
 const bucket_count = 32;
@@ -26,20 +26,20 @@ pub fn init() void {
     }
 }
 
-pub fn wait(wait_reason: *WaitReason, source: u32, hart_index: Hart.Index) void {
+pub fn wait(wait_node: *WaitNode, source: u32, hart_index: Hart.Index) void {
     const bucket = bucketOf(source);
     defer bucket.lock.unlock();
 
-    var prev: ?*WaitReason = null;
-    var curr: ?*WaitReason = bucket.head;
+    var prev: ?*WaitNode = null;
+    var curr: ?*WaitNode = bucket.head;
     while (curr) |c| {
         prev = c;
         curr = c.payload.interrupt.next;
     }
     if (prev) |p| {
-        p.payload.interrupt.next = wait_reason;
+        p.payload.interrupt.next = wait_node;
     } else {
-        bucket.head = wait_reason;
+        bucket.head = wait_node;
     }
 
     const hart_id = proc.harts[hart_index].id;
@@ -59,10 +59,10 @@ pub fn check(thread: ?*Thread, idle_hart_index: Hart.Index) noreturn {
     const bucket = bucketOf(source);
 
     outer: while (true) {
-        var prev: ?*WaitReason = null;
-        var curr: ?*WaitReason = bucket.head;
+        var prev: ?*WaitNode = null;
+        var curr: ?*WaitNode = bucket.head;
         while (curr) |c| {
-            const owner = proc.threadFromWaitReason(c);
+            const owner = proc.threadFromWaitNode(c);
             if (!owner.lock.tryLock()) {
                 bucket.lock.unlock();
                 // Add some delay.
@@ -108,9 +108,9 @@ pub fn remove(thread: *Thread, source: u32) void {
     const bucket = bucketOf(source);
     defer bucket.lock.unlock();
 
-    var prev: ?*WaitReason = null;
-    var curr: ?*WaitReason = bucket.head;
-    const wait_reason = while (curr) |c| {
+    var prev: ?*WaitNode = null;
+    var curr: ?*WaitNode = bucket.head;
+    const wait_node = while (curr) |c| {
         // FIXME: check that this is the correct thread?
         if (c.payload.interrupt.source == source) {
             break c;
@@ -120,9 +120,9 @@ pub fn remove(thread: *Thread, source: u32) void {
     } else return;
 
     if (prev) |p| {
-        p.payload.interrupt.next = wait_reason.payload.interrupt.next;
+        p.payload.interrupt.next = wait_node.payload.interrupt.next;
     } else {
-        bucket.head = wait_reason.payload.interrupt.next;
+        bucket.head = wait_node.payload.interrupt.next;
     }
     const hart_index = thread.context.hart_index;
     const hart_id = proc.harts[hart_index].id;

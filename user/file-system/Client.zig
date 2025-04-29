@@ -2,7 +2,7 @@ const std = @import("std");
 const mem = std.mem;
 const Allocator = mem.Allocator;
 const libt = @import("libt");
-const WaitReason = libt.syscall.WaitReason;
+const WaitEvent = libt.syscall.WaitEvent;
 const Client = @This();
 
 pub const Directory = @import("Client/Directory.zig");
@@ -27,10 +27,10 @@ pub const Response = union(enum) {
     file: File.Response,
 };
 
-pub fn hasRequest(self: Client, request_out: *Request, wait_reason: ?*WaitReason) bool {
+pub fn hasRequest(self: Client, request_out: *Request, wait_event: ?*WaitEvent) bool {
     return switch (self.kind) {
-        .directory => self.kind.directory.hasRequest(request_out, wait_reason),
-        .file => self.kind.file.hasRequest(request_out, wait_reason),
+        .directory => self.kind.directory.hasRequest(request_out, wait_event),
+        .file => self.kind.file.hasRequest(request_out, wait_event),
     };
 }
 

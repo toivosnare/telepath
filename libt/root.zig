@@ -29,7 +29,7 @@ pub fn wake(wake_addr: *atomic.Value(u32), count: usize) syscall.SynchronizeErro
 }
 
 pub fn waitFutex(address: *atomic.Value(u32), expected_value: u32, timeout_us: ?usize) syscall.SynchronizeError!void {
-    var event: syscall.WaitReason = .{
+    var event: syscall.WaitEvent = .{
         .tag = .futex,
         .payload = .{ .futex = .{
             .address = address,
@@ -42,7 +42,7 @@ pub fn waitFutex(address: *atomic.Value(u32), expected_value: u32, timeout_us: ?
 }
 
 pub fn waitThread(thread_handle: Handle, timeout_us: ?usize) syscall.SynchronizeError!usize {
-    var event: syscall.WaitReason = .{
+    var event: syscall.WaitEvent = .{
         .tag = .thread,
         .payload = .{ .thread = thread_handle },
     };
@@ -52,7 +52,7 @@ pub fn waitThread(thread_handle: Handle, timeout_us: ?usize) syscall.Synchronize
 }
 
 pub fn waitInterrupt(source: u32, timeout_us: ?usize) syscall.SynchronizeError!void {
-    var event: syscall.WaitReason = .{
+    var event: syscall.WaitEvent = .{
         .tag = .interrupt,
         .payload = .{ .interrupt = source },
     };
@@ -69,7 +69,7 @@ pub fn sleep(timeout_us: ?usize) syscall.SynchronizeError!void {
     unreachable;
 }
 
-pub fn waitMultiple(events: []syscall.WaitReason, timeout_us: ?usize) syscall.SynchronizeError!usize {
+pub fn waitMultiple(events: []syscall.WaitEvent, timeout_us: ?usize) syscall.SynchronizeError!usize {
     return syscall.synchronize(null, events, if (timeout_us) |t| t else math.maxInt(usize));
 }
 
@@ -78,7 +78,7 @@ pub fn call(wake_addr: *atomic.Value(u32), wait_addr: *atomic.Value(u32), expect
         .address = wake_addr,
         .count = 1,
     };
-    var event: syscall.WaitReason = .{
+    var event: syscall.WaitEvent = .{
         .tag = .futex,
         .payload = .{ .futex = .{
             .address = wait_addr,

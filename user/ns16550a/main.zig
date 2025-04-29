@@ -176,7 +176,7 @@ pub fn main(args: []usize) usize {
         .{ .address = &tx_channel.read_index, .count = 0 },
         .{ .address = &rx_channel.write_index, .count = 0 },
     };
-    var events: [2]syscall.WaitReason = .{
+    var events: [2]syscall.WaitEvent = .{
         .{ .tag = .futex, .payload = .{ .futex = .{ .address = &tx_channel.write_index, .expected_value = undefined } } },
         .{ .tag = .interrupt, .payload = .{ .interrupt = interrupt_source } },
     };

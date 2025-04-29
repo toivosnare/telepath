@@ -197,7 +197,7 @@ pub fn main(args: []usize) !usize {
     const request_channel_index = 0;
     const interrupt_index = 1;
 
-    var wait_reasons: [2]syscall.WaitReason = .{
+    var wait_events: [2]syscall.WaitEvent = .{
         .{ .tag = .futex, .payload = .{ .futex = .{ .address = &request_channel.empty.state, .expected_value = undefined } } },
         .{ .tag = .interrupt, .payload = .{ .interrupt = interrupt_source } },
     };
@@ -220,19 +220,19 @@ pub fn main(args: []usize) !usize {
 
         const old_state = request_channel.empty.state.load(.monotonic);
         request_channel.mutex.unlock();
-        wait_reasons[request_channel_index].payload.futex.expected_value = old_state;
+        wait_events[request_channel_index].payload.futex.expected_value = old_state;
 
         while (true) {
-            const index = libt.waitMultiple(&wait_reasons, null) catch unreachable;
+            const index = libt.waitMultiple(&wait_events, null) catch unreachable;
             if (index == request_channel_index) {
-                syscall.unpackResult(syscall.SynchronizeError!void, wait_reasons[request_channel_index].result) catch |err| switch (err) {
+                syscall.unpackResult(syscall.SynchronizeError!void, wait_events[request_channel_index].result) catch |err| switch (err) {
                     error.WouldBlock => {},
                     else => @panic("wait errror"),
                 };
                 continue :outer;
             } else {
                 assert(index == interrupt_index);
-                assert(syscall.unpackResult(syscall.SynchronizeError!usize, wait_reasons[interrupt_index].result) catch 1 == 0);
+                assert(syscall.unpackResult(syscall.SynchronizeError!usize, wait_events[interrupt_index].result) catch 1 == 0);
 
                 regs.interrupt_acknowledge = @bitCast(regs.interrupt_status);
                 syscall.ack(interrupt_source) catch unreachable;

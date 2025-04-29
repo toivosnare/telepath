@@ -20,14 +20,14 @@ process: *Process,
 state: State,
 context: Context,
 scheduler_next: ?*Thread,
-waiters_head: ?*WaitReason,
+waiters_head: ?*WaitNode,
 exit_code: usize,
-wait_reasons: [max_wait_reasons]WaitReason,
-wait_reasons_user: []libt.syscall.WaitReason,
+wait_nodes: [max_wait_nodes]WaitNode,
+wait_events: []libt.syscall.WaitEvent,
 wait_timeout_next: ?*Thread,
 wait_timeout_time: u64,
 
-const max_wait_reasons = 8;
+const max_wait_nodes = 8;
 
 pub const Id = usize;
 
@@ -79,21 +79,21 @@ pub const Context = extern struct {
     }
 };
 
-pub const WaitReason = struct {
+pub const WaitNode = struct {
     result: ?usize,
     payload: union(Tag) {
         none: void,
         futex: struct {
             address: PhysicalAddress,
-            next: ?*WaitReason,
+            next: ?*WaitNode,
         },
         thread: struct {
             thread: *Thread,
-            next: ?*WaitReason,
+            next: ?*WaitNode,
         },
         interrupt: struct {
             source: u32,
-            next: ?*WaitReason,
+            next: ?*WaitNode,
         },
     },
 
@@ -155,9 +155,9 @@ pub fn exit(self: *Thread, exit_code: usize) void {
     self.exit_code = exit_code;
 
     outer: while (true) {
-        var wait_reason: ?*WaitReason = self.waiters_head;
-        while (wait_reason) |wr| : (wait_reason = wr.payload.thread.next) {
-            const owner = proc.threadFromWaitReason(wr);
+        var wait_node: ?*WaitNode = self.waiters_head;
+        while (wait_node) |wn| : (wait_node = wn.payload.thread.next) {
+            const owner = proc.threadFromWaitNode(wn);
             if (!owner.lock.tryLock()) {
                 self.lock.unlock();
                 // Add some delay.
@@ -168,18 +168,18 @@ pub fn exit(self: *Thread, exit_code: usize) void {
             }
             defer owner.lock.unlock();
 
-            assert(wr.payload.thread.thread == self);
+            assert(wn.payload.thread.thread == self);
 
             // log.debug("Thread id={d} received interrupt source=0x{x}", .{ owner.id, source });
-            owner.waitComplete(wr, exit_code);
+            owner.waitComplete(wn, exit_code);
             proc.scheduler.enqueue(owner);
         }
         break :outer;
     }
 }
 
-pub fn synchronize(self: *Thread, signals: []libt.syscall.WakeSignal, events: []libt.syscall.WaitReason, timeout_us: usize) !usize {
-    if (events.len > max_wait_reasons)
+pub fn synchronize(self: *Thread, signals: []libt.syscall.WakeSignal, events: []libt.syscall.WaitEvent, timeout_us: usize) !usize {
+    if (events.len > max_wait_nodes)
         return error.InvalidParameter;
 
     // TODO: Make sure reading the signal fields do not trap.
@@ -193,31 +193,31 @@ pub fn synchronize(self: *Thread, signals: []libt.syscall.WakeSignal, events: []
     }
 
     // TODO: Make sure reading the event fields do not trap.
-    self.wait_reasons_user = events;
-    for (0.., self.wait_reasons_user, self.waitReasons()) |event_index, *event_user, *event| {
-        event.result = null;
-        event.payload = .{ .none = {} };
+    self.wait_events = events;
+    for (0.., self.wait_events, self.waitNodes()) |event_index, *event, *node| {
+        node.result = null;
+        node.payload = .{ .none = {} };
 
-        const result_or_error = if (event_user.tag == .futex) blk: {
-            const virtual_address = @intFromPtr(event_user.payload.futex.address);
-            const expected_value = event_user.payload.futex.expected_value;
-            break :blk proc.Futex.wait(self, event, virtual_address, expected_value);
-        } else if (event_user.tag == .thread) blk: {
-            const thread_handle = event_user.payload.thread;
-            break :blk self.waitThread(event, thread_handle);
-        } else if (event_user.tag == .interrupt) blk: {
-            const source = event_user.payload.interrupt;
-            break :blk self.waitInterrupt(event, source);
+        const result_or_error = if (event.tag == .futex) blk: {
+            const virtual_address = @intFromPtr(event.payload.futex.address);
+            const expected_value = event.payload.futex.expected_value;
+            break :blk proc.Futex.wait(self, node, virtual_address, expected_value);
+        } else if (event.tag == .thread) blk: {
+            const thread_handle = event.payload.thread;
+            break :blk self.waitThread(node, thread_handle);
+        } else if (event.tag == .interrupt) blk: {
+            const source = event.payload.interrupt;
+            break :blk self.waitInterrupt(node, source);
         } else blk: {
             break :blk error.InvalidParameter;
         };
         if (result_or_error) |res| {
             if (res) |r| {
-                event_user.result = r;
+                event.result = r;
                 return event_index;
             }
         } else |err| {
-            event_user.result = libt.syscall.packResult(err);
+            event.result = libt.syscall.packResult(err);
             return event_index;
         }
     }
@@ -234,11 +234,11 @@ pub fn synchronize(self: *Thread, signals: []libt.syscall.WakeSignal, events: []
     const hart_index = self.context.hart_index;
     self.lock.unlock();
 
-    log.debug("Thread id={d} is waiting with {d} reasons", .{ self.id, events.len });
+    log.debug("Thread id={d} is waiting with {d} events", .{ self.id, events.len });
     proc.scheduler.scheduleNext(null, hart_index);
 }
 
-fn waitThread(self: *Thread, wait_reason: *WaitReason, thread_handle: Handle) !?usize {
+fn waitThread(self: *Thread, wait_node: *WaitNode, thread_handle: Handle) !?usize {
     const thread = blk: {
         self.process.lock.lock();
         defer self.process.lock.unlock();
@@ -253,32 +253,32 @@ fn waitThread(self: *Thread, wait_reason: *WaitReason, thread_handle: Handle) !?
         return self.exit_code;
     }
 
-    wait_reason.payload = .{ .thread = .{ .thread = thread, .next = thread.waiters_head } };
-    thread.waiters_head = wait_reason;
+    wait_node.payload = .{ .thread = .{ .thread = thread, .next = thread.waiters_head } };
+    thread.waiters_head = wait_node;
     return null;
 }
 
-fn waitInterrupt(self: *Thread, wait_reason: *WaitReason, source: u32) ?usize {
+fn waitInterrupt(self: *Thread, wait_node: *WaitNode, source: u32) ?usize {
     log.debug("Thread id={d} waiting on interrupt source=0x{x}", .{ self.id, source });
     const hart_index = self.context.hart_index;
-    wait_reason.payload = .{ .interrupt = .{ .source = source, .next = null } };
-    proc.interrupt.wait(wait_reason, source, hart_index);
+    wait_node.payload = .{ .interrupt = .{ .source = source, .next = null } };
+    proc.interrupt.wait(wait_node, source, hart_index);
     return null;
 }
 
-pub fn waitComplete(self: *Thread, wait_reason: *WaitReason, result: usize) void {
-    log.debug("WaitReason of Thread id={d} is complete", .{self.id});
-    assert(proc.threadFromWaitReason(wait_reason) == self);
-    wait_reason.result = result;
+pub fn waitComplete(self: *Thread, wait_node: *WaitNode, result: usize) void {
+    log.debug("WaitNode of Thread id={d} is complete", .{self.id});
+    assert(proc.threadFromWaitNode(wait_node) == self);
+    wait_node.result = result;
     self.waitRemove();
     proc.timeout.remove(self);
 }
 
 fn waitThreadRemove(self: *Thread, waitee: *Thread) void {
-    var prev: ?*WaitReason = null;
-    var curr: ?*WaitReason = waitee.waiters_head;
-    const wait_reason = while (curr) |c| {
-        if (proc.threadFromWaitReason(c) == self) {
+    var prev: ?*WaitNode = null;
+    var curr: ?*WaitNode = waitee.waiters_head;
+    const wait_node = while (curr) |c| {
+        if (proc.threadFromWaitNode(c) == self) {
             break c;
         }
         prev = c;
@@ -286,22 +286,22 @@ fn waitThreadRemove(self: *Thread, waitee: *Thread) void {
     } else return;
 
     if (prev) |p| {
-        p.payload.thread.next = wait_reason.payload.thread.next;
+        p.payload.thread.next = wait_node.payload.thread.next;
     } else {
-        waitee.waiters_head = wait_reason.payload.thread.next;
+        waitee.waiters_head = wait_node.payload.thread.next;
     }
 }
 
 pub fn waitRemove(self: *Thread) void {
-    log.debug("Thread id={d} clearing WaitReasons", .{self.id});
-    for (self.waitReasons()) |*wait_reason| {
-        if (wait_reason.result) |_|
+    log.debug("Thread id={d} clearing WaitNodes", .{self.id});
+    for (self.waitNodes()) |*wait_node| {
+        if (wait_node.result) |_|
             continue;
-        switch (wait_reason.payload) {
+        switch (wait_node.payload) {
             .none => {},
-            .futex => proc.Futex.remove(self, wait_reason.payload.futex.address),
-            .thread => waitThreadRemove(self, wait_reason.payload.thread.thread),
-            .interrupt => proc.interrupt.remove(self, wait_reason.payload.interrupt.source),
+            .futex => proc.Futex.remove(self, wait_node.payload.futex.address),
+            .thread => waitThreadRemove(self, wait_node.payload.thread.thread),
+            .interrupt => proc.interrupt.remove(self, wait_node.payload.interrupt.source),
         }
     }
 }
@@ -309,9 +309,9 @@ pub fn waitRemove(self: *Thread) void {
 pub fn waitCopyResult(self: *Thread) void {
     log.debug("Thread id={d} copying wait result to user", .{self.id});
 
-    for (0.., self.waitReasons(), self.wait_reasons_user) |index, *kernel, *user| {
-        if (kernel.result) |r| {
-            user.result = r;
+    for (0.., self.waitNodes(), self.wait_events) |index, *node, *event| {
+        if (node.result) |r| {
+            event.result = r;
             self.context.a0 = index;
             break;
         }
@@ -321,17 +321,17 @@ pub fn waitCopyResult(self: *Thread) void {
 
 pub fn waitClear(self: *Thread) void {
     log.debug("Thread id={d} clearing wait state", .{self.id});
-    for (&self.wait_reasons) |*wait_reason| {
-        wait_reason.result = null;
-        wait_reason.payload = .{ .none = {} };
+    for (&self.wait_nodes) |*wait_node| {
+        wait_node.result = null;
+        wait_node.payload = .{ .none = {} };
     }
-    self.wait_reasons_user = &.{};
+    self.wait_events = &.{};
     self.wait_timeout_next = null;
     self.wait_timeout_time = 0;
 }
 
-fn waitReasons(self: *Thread) []WaitReason {
-    return (&self.wait_reasons)[0..self.wait_reasons_user.len];
+fn waitNodes(self: *Thread) []WaitNode {
+    return (&self.wait_nodes)[0..self.wait_events.len];
 }
 
 pub fn ack(self: *Thread, source: u32) void {

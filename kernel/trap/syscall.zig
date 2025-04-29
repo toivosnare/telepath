@@ -249,8 +249,8 @@ pub fn synchronize(thread: *Thread) SynchronizeError!usize {
     else
         &.{};
 
-    const events_start: ?[*]libt.syscall.WaitReason = @ptrFromInt(events_int);
-    const events: []libt.syscall.WaitReason = if (events_start) |start|
+    const events_start: ?[*]libt.syscall.WaitEvent = @ptrFromInt(events_int);
+    const events: []libt.syscall.WaitEvent = if (events_start) |start|
         start[0..events_count]
     else
         &.{};

@@ -120,16 +120,16 @@ pub fn exit(exit_code: usize) noreturn {
 }
 
 pub const SynchronizeError = error{ InvalidParameter, OutOfMemory, NoPermission, Timeout, WouldBlock };
-pub fn synchronize(signals: ?[]const WakeSignal, reasons: ?[]WaitReason, timeout_us: usize) SynchronizeError!usize {
+pub fn synchronize(signals: ?[]const WakeSignal, events: ?[]WaitEvent, timeout_us: usize) SynchronizeError!usize {
     const signals_len, const signals_ptr = if (signals) |s|
         .{ s.len, @intFromPtr(s.ptr) }
     else
         .{ 0, 0 };
-    const reasons_len, const reasons_ptr = if (reasons) |r|
+    const events_len, const events_ptr = if (events) |r|
         .{ r.len, @intFromPtr(r.ptr) }
     else
         .{ 0, 0 };
-    return unpackResult(SynchronizeError!usize, syscall5(.synchronize, signals_len, signals_ptr, reasons_len, reasons_ptr, timeout_us));
+    return unpackResult(SynchronizeError!usize, syscall5(.synchronize, signals_len, signals_ptr, events_len, events_ptr, timeout_us));
 }
 
 pub const AckError = error{InvalidParameter};
@@ -160,7 +160,7 @@ pub const WakeSignal = extern struct {
     count: usize,
 };
 
-pub const WaitReason = extern struct {
+pub const WaitEvent = extern struct {
     payload: extern union {
         futex: Futex,
         thread: Handle,

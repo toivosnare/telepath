@@ -10,12 +10,12 @@ const VirtualAddress = mm.VirtualAddress;
 const PhysicalAddress = mm.PhysicalAddress;
 const proc = @import("../proc.zig");
 const Thread = proc.Thread;
-const WaitReason = Thread.WaitReason;
+const WaitNode = Thread.WaitNode;
 const Futex = @This();
 
 address: PhysicalAddress,
-head: ?*WaitReason,
-tail: ?*WaitReason,
+head: ?*WaitNode,
+tail: ?*WaitNode,
 next: ?*Futex,
 
 const Bucket = struct {
@@ -48,7 +48,7 @@ pub fn init() void {
     free_list_head = prev;
 }
 
-pub fn wait(thread: *Thread, wait_reason: *WaitReason, virtual_address: VirtualAddress, expected_value: u32) !?usize {
+pub fn wait(thread: *Thread, wait_node: *WaitNode, virtual_address: VirtualAddress, expected_value: u32) !?usize {
     if (virtual_address >= mm.user_virtual_end) {
         log.warn("Thread id={d} tried to wait on address=0x{x} which is outside user address space", .{ thread.id, virtual_address });
         return error.InvalidParameter;
@@ -91,13 +91,13 @@ pub fn wait(thread: *Thread, wait_reason: *WaitReason, virtual_address: VirtualA
     } else try allocate(bucket, physical_address);
 
     if (futex.tail) |tail| {
-        tail.payload.futex.next = wait_reason;
+        tail.payload.futex.next = wait_node;
     } else {
-        futex.head = wait_reason;
+        futex.head = wait_node;
     }
-    futex.tail = wait_reason;
+    futex.tail = wait_node;
 
-    wait_reason.payload = .{ .futex = .{ .address = physical_address, .next = null } };
+    wait_node.payload = .{ .futex = .{ .address = physical_address, .next = null } };
     return null;
 }
 
@@ -140,8 +140,8 @@ pub fn wake(thread: *Thread, virtual_address: VirtualAddress, count: usize) !usi
             return result;
         };
 
-        const event = futex.head orelse @panic("empty futex");
-        const waiting_thread = proc.threadFromWaitReason(event);
+        const node = futex.head orelse @panic("empty futex");
+        const waiting_thread = proc.threadFromWaitNode(node);
 
         if (!waiting_thread.lock.tryLock()) {
             bucket.lock.unlock();
@@ -152,15 +152,15 @@ pub fn wake(thread: *Thread, virtual_address: VirtualAddress, count: usize) !usi
 
         log.debug("Popped Thread id={d} from Futex address=0x{x}", .{ waiting_thread.id, physical_address });
 
-        futex.head = event.payload.futex.next;
-        if (futex.tail == event) {
+        futex.head = node.payload.futex.next;
+        if (futex.tail == node) {
             futex.tail = null;
             assert(futex.head == null);
             futex.free(bucket, prev);
         }
         bucket.lock.unlock();
 
-        waiting_thread.waitComplete(event, 0);
+        waiting_thread.waitComplete(node, 0);
         proc.scheduler.enqueue(waiting_thread);
         waiting_thread.lock.unlock();
 
@@ -184,23 +184,23 @@ pub fn remove(thread: *Thread, physical_address: PhysicalAddress) void {
         curr_futex = curr.next;
     } else return;
 
-    var prev_wait_reason: ?*WaitReason = null;
-    var curr_wait_reason: ?*WaitReason = futex.head;
-    const wait_reason = while (curr_wait_reason) |curr| {
-        if (proc.threadFromWaitReason(curr) == thread) {
+    var prev_wait_node: ?*WaitNode = null;
+    var curr_wait_node: ?*WaitNode = futex.head;
+    const wait_node = while (curr_wait_node) |curr| {
+        if (proc.threadFromWaitNode(curr) == thread) {
             break curr;
         }
-        prev_wait_reason = curr;
-        curr_wait_reason = curr.payload.futex.next;
+        prev_wait_node = curr;
+        curr_wait_node = curr.payload.futex.next;
     } else return;
 
-    if (prev_wait_reason) |prev| {
-        prev.payload.futex.next = wait_reason.payload.futex.next;
+    if (prev_wait_node) |prev| {
+        prev.payload.futex.next = wait_node.payload.futex.next;
     } else {
-        futex.head = wait_reason.payload.futex.next;
+        futex.head = wait_node.payload.futex.next;
     }
-    if (wait_reason == futex.tail) {
-        if (prev_wait_reason) |prev| {
+    if (wait_node == futex.tail) {
+        if (prev_wait_node) |prev| {
             futex.tail = prev;
         } else {
             futex.tail = null;

@@ -7,7 +7,7 @@ const libt = @import("libt");
 const syscall = libt.syscall;
 const service = libt.service;
 const Channel = service.Channel;
-const WaitReason = syscall.WaitReason;
+const WaitEvent = syscall.WaitEvent;
 const main = @import("../main.zig");
 const fcache = @import("../file_cache.zig");
 const scache = @import("../sector_cache.zig");
@@ -27,7 +27,7 @@ const Region = extern struct {
     buffer: [service.Directory.buffer_capacity]u8,
 };
 
-pub fn hasRequest(self: Directory, request_out: *Client.Request, wait_reason: ?*WaitReason) bool {
+pub fn hasRequest(self: Directory, request_out: *Client.Request, wait_event: ?*WaitEvent) bool {
     const request_channel = &self.region.request;
     request_channel.mutex.lock();
 
@@ -41,8 +41,8 @@ pub fn hasRequest(self: Directory, request_out: *Client.Request, wait_reason: ?*
     const old_state = request_channel.empty.state.load(.monotonic);
     request_channel.mutex.unlock();
 
-    if (wait_reason) |wr|
-        wr.payload = .{ .futex = .{
+    if (wait_event) |we|
+        we.payload = .{ .futex = .{
             .address = &request_channel.empty.state,
             .expected_value = old_state,
         } };
