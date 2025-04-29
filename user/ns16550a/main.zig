@@ -168,52 +168,59 @@ pub fn main(args: []usize) usize {
 
     const tx_channel = &client.tx;
     const rx_channel = &client.rx;
-    const tx_capacity = @typeInfo(@TypeOf(tx_channel)).pointer.child.capacity;
     const rx_capacity = @typeInfo(@TypeOf(rx_channel)).pointer.child.capacity;
     const tx_channel_index = 0;
+    const rx_channel_index = 1;
     const interrupt_index = 1;
-    var wait_reasons: [2]syscall.WaitReason = .{
-        .{ .tag = .futex, .payload = .{ .futex = .{ .address = &tx_channel.empty.state, .expected_value = undefined } } },
+    var signals: [2]syscall.WakeSignal = .{
+        .{ .address = &tx_channel.read_index, .count = 0 },
+        .{ .address = &rx_channel.write_index, .count = 0 },
+    };
+    var events: [2]syscall.WaitReason = .{
+        .{ .tag = .futex, .payload = .{ .futex = .{ .address = &tx_channel.write_index, .expected_value = undefined } } },
         .{ .tag = .interrupt, .payload = .{ .interrupt = interrupt_source } },
     };
     outer: while (true) {
-        tx_channel.mutex.lock();
-        const slice = tx_channel.unreadSlice();
-        var it = slice.iterator();
-        while (it.next()) |c| {
+        const tx_w = tx_channel.write_index.load(.acquire);
+        const tx_r = tx_channel.read_index.load(.acquire);
+        const tx_len = tx_w -% tx_r;
+        const slice = tx_channel.getSliceAt(tx_r, tx_len);
+        var slice_it = slice.iterator();
+        while (slice_it.next()) |c| {
             ns16550a.putc(c);
         }
-        tx_channel.read_index = (tx_channel.read_index + slice.length()) % tx_capacity;
-        tx_channel.length -= slice.length();
-        tx_channel.full.notify(.one);
-
-        const old_state = tx_channel.empty.state.load(.monotonic);
-        tx_channel.mutex.unlock();
-        wait_reasons[tx_channel_index].payload.futex.expected_value = old_state;
+        tx_channel.read_index.store(tx_r +% slice.length(), .release);
+        signals[tx_channel_index].count = 1;
+        events[tx_channel_index].payload.futex.expected_value = tx_w;
 
         while (true) {
-            const index = libt.waitMultiple(&wait_reasons, null) catch unreachable;
+            const index = syscall.synchronize(&signals, &events, math.maxInt(usize)) catch unreachable;
+            signals[tx_channel_index].count = 0;
+            signals[rx_channel_index].count = 0;
+
             if (index == tx_channel_index) {
-                syscall.unpackResult(syscall.SynchronizeError!void, wait_reasons[tx_channel_index].result) catch |err| switch (err) {
+                syscall.unpackResult(syscall.SynchronizeError!void, events[tx_channel_index].result) catch |err| switch (err) {
                     error.WouldBlock => {},
                     else => @panic("wait errror"),
                 };
                 continue :outer;
             } else {
                 assert(index == interrupt_index);
-                assert(syscall.unpackResult(syscall.SynchronizeError!usize, wait_reasons[interrupt_index].result) catch 1 == 0);
+                assert(syscall.unpackResult(syscall.SynchronizeError!usize, events[interrupt_index].result) catch 1 == 0);
 
                 syscall.ack(interrupt_source) catch unreachable;
 
-                rx_channel.mutex.lock();
+                var rx_w = rx_channel.write_index.load(.acquire);
+                const rx_r = rx_channel.read_index.load(.acquire);
+
                 while (ns16550a.getc()) |c| {
-                    rx_channel.buffer[rx_channel.write_index] = c;
-                    rx_channel.write_index = (rx_channel.write_index + 1) % rx_capacity;
-                    if (!rx_channel.isFull())
-                        rx_channel.length += 1;
+                    if (rx_capacity - (rx_w -% rx_r) > 0) {
+                        rx_channel.buffer[rx_w % rx_capacity] = c;
+                        rx_w +%= 1;
+                    }
                 }
-                rx_channel.empty.notify(.one);
-                rx_channel.mutex.unlock();
+                rx_channel.write_index.store(rx_w, .release);
+                signals[rx_channel_index].count = 1;
             }
         }
     }

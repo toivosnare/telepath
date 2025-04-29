@@ -1,15 +1,9 @@
 const libt = @import("../root.zig");
-const Channel = libt.service.Channel;
+const Fifo = libt.service.Fifo;
 
 pub const SerialDriver = extern struct {
-    tx: Channel(u8, capacity, .transmit),
-    rx: Channel(u8, capacity, .receive),
+    tx: Fifo(u8, capacity, true, false, .write_only),
+    rx: Fifo(u8, capacity, false, true, .read_only),
 };
 
-// Fits in one page.
-const capacity = 2004;
-
-comptime {
-    const std = @import("std");
-    std.debug.assert(@sizeOf(@This()) == 4096);
-}
+const capacity = 1024;
