@@ -160,6 +160,11 @@ fn handleLoadSegment(process: Handle, header: elf.Elf64_Phdr, elf_bytes: []const
 
     const source = elf_bytes.ptr + header.p_offset;
     const offset = header.p_vaddr % page_size;
+
+    // TODO: Remove once the syscall handles unmapped pages.
+    var addr = mem.alignBackward(usize, @intFromPtr(source), page_size);
+    while (addr < @intFromPtr(source + header.p_filesz)) : (addr += page_size)
+        mem.doNotOptimizeAway(@as(*const u8, @ptrFromInt(addr)).*);
     try syscall.regionWrite(process, region, source, offset, header.p_filesz);
 }
 

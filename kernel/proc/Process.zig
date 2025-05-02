@@ -474,6 +474,7 @@ pub fn readRegion(self: *Process, target_region_handle: Handle, to: UserVirtualA
 
     const target_region_capability = try Capability.get(target_region_handle, self);
     const target_region = try target_region_capability.region();
+    // TODO: Make sure the destination buffer is mapped in the page table.
     try target_region.read(to, offset, length);
 }
 
@@ -483,6 +484,7 @@ pub fn writeRegion(self: *Process, target_region_handle: Handle, from: UserVirtu
 
     const target_region_capability = try Capability.get(target_region_handle, self);
     const target_region = try target_region_capability.region();
+    // TODO: Make sure the source buffer is mapped in the page table.
     try target_region.write(from, offset, length);
 }
 
