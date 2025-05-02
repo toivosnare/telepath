@@ -158,13 +158,14 @@ export fn bootHartMain(boot_hart_id: Hart.Id, fdt_physical_start: PhysicalAddres
     region_headers.len = tix_header.region_amount;
 
     for (region_headers) |rh| {
-        const region_size_in_pages = math.divCeil(usize, rh.memory_size, @sizeOf(Page)) catch unreachable;
+        const aligned_load_address = mem.alignBackward(UserVirtualAddress, rh.load_address, @sizeOf(Page));
+        const aligned_end_address = mem.alignForward(UserVirtualAddress, rh.load_address + rh.memory_size, @sizeOf(Page));
+        const region_size_in_pages = (aligned_end_address - aligned_load_address) / @sizeOf(Page);
         const region_handle = init_process.allocateRegion(region_size_in_pages, .{
             .read = rh.readable,
             .write = rh.writable,
             .execute = rh.executable,
         }, 0) catch @panic("allocateRegion");
-        const aligned_load_address = mem.alignBackward(UserVirtualAddress, rh.load_address, @sizeOf(Page));
         _ = init_process.mapRegion(region_handle, aligned_load_address) catch @panic("mapRegion");
 
         const region_capability = Capability.get(region_handle, init_process) catch unreachable;
