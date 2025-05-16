@@ -27,7 +27,7 @@ pub fn init() void {
 pub inline fn enableInterrupts() void {
     log.debug("Enabling interrupts", .{});
     riscv.sie.write(.{
-        .ssie = false,
+        .ssie = true,
         .stie = true,
         .seie = true,
         .lcofie = false,
@@ -71,6 +71,7 @@ export fn handleTrap2(context: ?*Thread.Context, hart_index: proc.Hart.Index) no
 fn handleInterrupt(code: riscv.scause.InterruptCode, current_thread: ?*Thread, hart_index: proc.Hart.Index) noreturn {
     log.debug("Interrupt code={s} on hart index={d}", .{ @tagName(code), hart_index });
     switch (code) {
+        .supervisor_software_interrupt => proc.scheduler.scheduleNext(current_thread, hart_index),
         .supervisor_timer_interrupt => handleTimerInterrupt(current_thread, hart_index),
         .supervisor_external_interrupt => proc.interrupt.check(current_thread, hart_index),
         else => @panic("unhandled interrupt"),

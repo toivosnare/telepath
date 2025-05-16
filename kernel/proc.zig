@@ -20,6 +20,8 @@ pub const interrupt = @import("proc/interrupt.zig");
 
 pub const Hart = extern struct {
     id: Id,
+    idling: bool,
+
     pub const Id = usize;
     pub const Index = usize;
 };
@@ -54,6 +56,9 @@ var next_tid: atomic.Value(Thread.Id) = atomic.Value(Thread.Id).init(1);
 
 pub fn init() !*Process {
     log.info("Initializing process subsystem", .{});
+
+    for (&hart_array) |*hart|
+        hart.idling = false;
 
     const init_process = &process_table[0].process;
     init_process.id = 1;

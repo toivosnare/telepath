@@ -77,6 +77,7 @@ pub fn scheduleNext(current_thread: ?*Thread, hart_index: Hart.Index) noreturn {
         riscv.sstatus.clear(.spp);
         returnToUserspace(&nt.context);
     } else {
+        proc.harts[hart_index].idling = true;
         idle(@intFromPtr(&mm.kernel_stack) + (hart_index + 1) * entry.kernel_stack_size_per_hart, hart_index);
     }
 }

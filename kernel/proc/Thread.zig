@@ -2,6 +2,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const log = std.log.scoped(.@"proc.Thread");
 const mem = std.mem;
+const sbi = @import("sbi");
 const libt = @import("libt");
 const Spinlock = libt.sync.Spinlock;
 const Handle = libt.Handle;
@@ -188,6 +189,24 @@ pub fn synchronize(self: *Thread, signals: []libt.syscall.WakeSignal, events: []
     var waken_thread_count: usize = 0;
     for (signals) |signal|
         waken_thread_count += try proc.Futex.wake(self, @intFromPtr(signal.address), signal.count);
+
+    var waken_hart_count: usize = 0;
+    var hart_mask: usize = 0;
+    for (proc.harts) |*hart| {
+        if (waken_hart_count == waken_thread_count)
+            break;
+        if (hart.idling) {
+            hart.idling = false;
+            hart_mask |= @as(usize, 1) << @intCast(hart.id);
+            waken_hart_count += 1;
+        }
+    }
+    if (waken_hart_count != 0) {
+        sbi.ipi.sendIPI(.{ .mask = .{
+            .mask = hart_mask,
+            .base = 0,
+        } }) catch @panic("sending an IPI failed");
+    }
 
     defer {
         self.waitRemove();
