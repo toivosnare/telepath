@@ -95,8 +95,8 @@ pub fn regionSize(owner_process: Handle, target_region: Handle) RegionSizeError!
 }
 
 pub const ThreadAllocateError = error{ InvalidParameter, NoPermission, InvalidType, OutOfMemory };
-pub fn threadAllocate(owner_process: Handle, target_process: Handle, instruction_pointer: *const anyopaque, stack_pointer: *anyopaque, a0: usize, a1: usize, a2: usize) ThreadAllocateError!Handle {
-    return unpackResult(ThreadAllocateError!Handle, syscall7(.thread_allocate, @intFromEnum(owner_process), @intFromEnum(target_process), @intFromPtr(instruction_pointer), @intFromPtr(stack_pointer), a0, a1, a2));
+pub fn threadAllocate(owner_process: Handle, target_process: Handle, instruction_pointer: *const anyopaque, stack_pointer: *anyopaque, priority: usize, a0: usize, a1: usize) ThreadAllocateError!Handle {
+    return unpackResult(ThreadAllocateError!Handle, syscall7(.thread_allocate, @intFromEnum(owner_process), @intFromEnum(target_process), @intFromPtr(instruction_pointer), @intFromPtr(stack_pointer), priority, a0, a1));
 }
 
 pub const ThreadFreeError = error{ InvalidParameter, NoPermission, InvalidType };

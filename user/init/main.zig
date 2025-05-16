@@ -141,8 +141,7 @@ fn loadElf(elf_bytes: []const u8, service_map: *ServiceMap) !Handle {
     const args_slice = args.constSlice();
     const a0 = if (args_slice.len > 0) @intFromEnum(args_slice[0]) else 0;
     const a1 = if (args_slice.len > 1) @intFromEnum(args_slice[1]) else 0;
-    const a2 = if (args_slice.len > 2) @intFromEnum(args_slice[2]) else 0;
-    return syscall.threadAllocate(.self, process, @ptrFromInt(header.entry), stack_end, a0, a1, a2);
+    return syscall.threadAllocate(.self, process, @ptrFromInt(header.entry), stack_end, 7, a0, a1);
 }
 
 fn handleLoadSegment(process: Handle, header: elf.Elf64_Phdr, elf_bytes: []const u8) !void {

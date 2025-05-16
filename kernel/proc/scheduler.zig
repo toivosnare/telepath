@@ -15,10 +15,18 @@ const Thread = proc.Thread;
 
 const quantum_us: usize = 50_000;
 // const quantum_us: usize = 1_000_000;
+const priority_level_count = 8;
+
+pub const Priority = std.math.IntFittingRange(0, priority_level_count - 1);
+pub const max_priority: Priority = priority_level_count - 1;
+
+const Queue = struct {
+    head: ?*Thread = null,
+    tail: ?*Thread = null,
+};
 
 var lock: Spinlock = .{};
-var head: ?*Thread = null;
-var tail: ?*Thread = null;
+var queues: [priority_level_count]Queue = [_]Queue{.{}} ** priority_level_count;
 
 pub fn schedule(current_thread: ?*Thread, next_thread: *Thread, hart_index: Hart.Index) noreturn {
     log.debug("Scheduling Thread id={d} on hart index={d}", .{ next_thread.id, hart_index });
@@ -30,23 +38,47 @@ pub fn schedule(current_thread: ?*Thread, next_thread: *Thread, hart_index: Hart
 }
 
 pub fn scheduleNext(current_thread: ?*Thread, hart_index: Hart.Index) noreturn {
-    log.debug("Scheduling on hart index={d}", .{hart_index});
-    const next_thread = if (pop()) |next| blk: {
-        switchContext(current_thread, next, hart_index);
-        break :blk next;
-    } else if (current_thread != null) blk: {
-        log.debug("No threads in the ready queue. Continuing with Thread id={d} on hart index={d}", .{ current_thread.?.id, hart_index });
-        break :blk current_thread.?;
-    } else {
-        log.debug("No threads in the ready queue. Entering idle on hart index={d}", .{hart_index});
-        sbi.time.setTimer(riscv.time.read() + proc.ticks_per_us * quantum_us);
-        idle(@intFromPtr(&mm.kernel_stack) + (hart_index + 1) * entry.kernel_stack_size_per_hart, hart_index);
+    var priority: Priority = max_priority;
+    const min_priority = if (current_thread) |ct| ct.priority else 0;
+    lock.lock();
+
+    const next_thread = while (true) {
+        const queue = &queues[priority];
+        if (queue.head) |head| {
+            if (!head.lock.tryLock()) {
+                lock.unlock();
+                // Add some delay.
+                for (0..10) |i| mem.doNotOptimizeAway(i);
+                priority = max_priority;
+                lock.lock();
+                continue;
+            }
+            queue.head = head.scheduler_next;
+            head.scheduler_next = null;
+            if (head == queue.tail) {
+                assert(queue.head == null);
+                queue.tail = null;
+            }
+            lock.unlock();
+            switchContext(current_thread, head, hart_index);
+            break head;
+        }
+
+        if (priority == min_priority) {
+            lock.unlock();
+            break current_thread;
+        }
+        priority -= 1;
     };
 
-    if (current_thread == null)
-        riscv.sstatus.clear(.spp);
+    riscv.sip.clear(.ssip);
     sbi.time.setTimer(riscv.time.read() + proc.ticks_per_us * quantum_us);
-    returnToUserspace(&next_thread.context);
+    if (next_thread) |nt| {
+        riscv.sstatus.clear(.spp);
+        returnToUserspace(&nt.context);
+    } else {
+        idle(@intFromPtr(&mm.kernel_stack) + (hart_index + 1) * entry.kernel_stack_size_per_hart, hart_index);
+    }
 }
 
 pub fn scheduleCurrent(current_thread: *Thread) noreturn {
@@ -79,33 +111,6 @@ fn switchContext(current_thread: ?*Thread, next_thread: *Thread, hart_index: Har
         enqueue(current);
 }
 
-fn pop() ?*Thread {
-    while (true) {
-        lock.lock();
-
-        if (head) |h| {
-            if (!h.lock.tryLock()) {
-                lock.unlock();
-                // Add some delay.
-                for (0..10) |i|
-                    mem.doNotOptimizeAway(i);
-                continue;
-            }
-            head = h.scheduler_next;
-            h.scheduler_next = null;
-            if (h == tail) {
-                assert(head == null);
-                tail = null;
-            }
-            lock.unlock();
-            return h;
-        } else {
-            lock.unlock();
-            return null;
-        }
-    }
-}
-
 extern fn returnToUserspace(context: *Thread.Context) noreturn;
 extern fn idle(stack_pointer: usize, hart_index: Hart.Index) noreturn;
 
@@ -115,14 +120,15 @@ pub fn enqueue(thread: *Thread) void {
     lock.lock();
     defer lock.unlock();
 
-    if (tail) |t| {
+    const queue = &queues[thread.priority];
+    if (queue.tail) |t| {
         t.scheduler_next = thread;
     } else {
-        head = thread;
+        queue.head = thread;
     }
-    tail = thread;
-    thread.scheduler_next = null;
+    queue.tail = thread;
 
+    thread.scheduler_next = null;
     thread.state = .ready;
 }
 
@@ -131,17 +137,19 @@ pub fn remove(thread: *Thread) void {
     lock.lock();
     defer lock.unlock();
 
+    const queue = &queues[thread.priority];
+
     var prev: ?*Thread = null;
-    var current: ?*Thread = head;
+    var current: ?*Thread = queue.head;
     while (current) |c| {
         if (c == thread) {
             if (prev) |p| {
                 p.scheduler_next = thread.scheduler_next;
             } else {
-                head = thread.scheduler_next;
+                queue.head = thread.scheduler_next;
             }
-            if (thread == tail)
-                tail = prev;
+            if (thread == queue.tail)
+                queue.tail = prev;
             break;
         }
         prev = current;
@@ -150,6 +158,6 @@ pub fn remove(thread: *Thread) void {
 }
 
 pub fn onAddressTranslationEnabled() void {
-    head = mm.kernelVirtualFromPhysical(head.?);
-    tail = mm.kernelVirtualFromPhysical(tail.?);
+    queues[max_priority].head = mm.kernelVirtualFromPhysical(queues[max_priority].head.?);
+    queues[max_priority].tail = mm.kernelVirtualFromPhysical(queues[max_priority].tail.?);
 }

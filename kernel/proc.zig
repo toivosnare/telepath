@@ -180,6 +180,7 @@ pub fn allocateThread() !*Thread {
         thread.process = undefined;
         thread.state = .invalid;
         @memset(mem.asBytes(&thread.context), 0);
+        thread.priority = 0;
         thread.scheduler_next = null;
         thread.waiters_head = null;
         thread.exit_code = 0;
@@ -219,6 +220,7 @@ pub fn freeThread(thread: *Thread) void {
     thread.process = undefined;
     thread.state = .invalid;
     @memset(mem.asBytes(&thread.context), 0);
+    thread.priority = 0;
     thread.scheduler_next = null;
     thread.waiters_head = null;
     thread.exit_code = 0;

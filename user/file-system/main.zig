@@ -114,7 +114,7 @@ pub fn main(args: []usize) !void {
     const stack_start: [*]align(page_size) u8 = @ptrCast(try syscall.regionMap(.self, stack_handle, null));
     const stack_end = stack_start + stack_pages * page_size;
 
-    const worker_handle = try syscall.threadAllocate(.self, .self, &worker, stack_end, @intFromPtr(&allocator), 0, 0);
+    const worker_handle = try syscall.threadAllocate(.self, .self, &worker, stack_end, 7, @intFromPtr(&allocator), 0);
     _ = worker_handle;
 
     scache.loop();

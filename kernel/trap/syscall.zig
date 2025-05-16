@@ -177,13 +177,16 @@ pub fn threadAllocate(thread: *Thread) ThreadAllocateError!usize {
     const target_process_handle = handleFromUsize(thread.context.a2);
     const instruction_pointer = thread.context.a3;
     const stack_pointer = thread.context.a4;
-    const a0 = thread.context.a5;
-    const a1 = thread.context.a6;
-    const a2 = thread.context.a7;
+    const a0 = thread.context.a6;
+    const a1 = thread.context.a7;
     const calling_process = thread.process;
 
+    const priority = math.cast(proc.scheduler.Priority, thread.context.a5) orelse return error.InvalidParameter;
+    if (priority > thread.priority)
+        return error.InvalidParameter;
+
     const owner_process = try getProcess(calling_process, owner_process_handle);
-    return usizeFromHandle(try owner_process.allocateThread(target_process_handle, instruction_pointer, stack_pointer, a0, a1, a2));
+    return usizeFromHandle(try owner_process.allocateThread(target_process_handle, instruction_pointer, stack_pointer, priority, a0, a1));
 }
 
 pub const ThreadFreeError = syscall.ThreadFreeError;

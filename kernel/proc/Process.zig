@@ -16,6 +16,7 @@ const ConstPagePtr = mm.ConstPagePtr;
 const ConstPageFramePtr = mm.ConstPageFramePtr;
 const PageTable = mm.PageTable;
 const proc = @import("../proc.zig");
+const scheduler = proc.scheduler;
 const Thread = proc.Thread;
 const Capability = proc.Capability;
 const Process = @This();
@@ -509,11 +510,11 @@ pub fn sizeRegion(self: *Process, target_region_handle: Handle) !usize {
 pub fn allocateThread(
     self: *Process,
     target_process_handle: Handle,
-    instruction_pointer: usize,
-    stack_pointer: usize,
+    instruction_pointer: UserVirtualAddress,
+    stack_pointer: UserVirtualAddress,
+    priority: scheduler.Priority,
     a0: usize,
     a1: usize,
-    a2: usize,
 ) !Handle {
     self.lock.lock();
     defer self.lock.unlock();
@@ -540,8 +541,8 @@ pub fn allocateThread(
     thread.context.sp = stack_pointer;
     thread.context.a0 = a0;
     thread.context.a1 = a1;
-    thread.context.a2 = a2;
-    proc.scheduler.enqueue(thread);
+    thread.priority = priority;
+    scheduler.enqueue(thread);
 
     return capability.toHandle();
 }

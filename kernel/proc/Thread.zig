@@ -9,6 +9,7 @@ const mm = @import("../mm.zig");
 const PhysicalAddress = mm.PhysicalAddress;
 const VirtualAddress = mm.VirtualAddress;
 const proc = @import("../proc.zig");
+const scheduler = proc.scheduler;
 const Process = proc.Process;
 const Capability = proc.Capability;
 const Thread = @This();
@@ -19,6 +20,7 @@ id: Id,
 process: *Process,
 state: State,
 context: Context,
+priority: scheduler.Priority,
 scheduler_next: ?*Thread,
 waiters_head: ?*WaitNode,
 exit_code: usize,
@@ -121,7 +123,7 @@ pub fn unref(self: *Thread) void {
 
     switch (self.state) {
         .invalid => unreachable,
-        .ready => proc.scheduler.remove(self),
+        .ready => scheduler.remove(self),
         .waiting => {
             self.waitRemove();
             proc.timeout.remove(self);
@@ -136,7 +138,7 @@ pub fn unref(self: *Thread) void {
 pub fn die(self: *Thread, exit_code: usize) void {
     switch (self.state) {
         .invalid => unreachable,
-        .ready => proc.scheduler.remove(self),
+        .ready => scheduler.remove(self),
         .waiting => {
             self.waitRemove();
             proc.timeout.remove(self);
@@ -172,7 +174,7 @@ pub fn exit(self: *Thread, exit_code: usize) void {
 
             // log.debug("Thread id={d} received interrupt source=0x{x}", .{ owner.id, source });
             owner.waitComplete(wn, exit_code);
-            proc.scheduler.enqueue(owner);
+            scheduler.enqueue(owner);
         }
         break :outer;
     }
@@ -235,7 +237,7 @@ pub fn synchronize(self: *Thread, signals: []libt.syscall.WakeSignal, events: []
     self.lock.unlock();
 
     log.debug("Thread id={d} is waiting with {d} events", .{ self.id, events.len });
-    proc.scheduler.scheduleNext(null, hart_index);
+    scheduler.scheduleNext(null, hart_index);
 }
 
 fn waitThread(self: *Thread, wait_node: *WaitNode, thread_handle: Handle) !?usize {
@@ -340,10 +342,10 @@ pub fn ack(self: *Thread, source: u32) void {
 
 pub fn handlePageFault(self: *Thread, faulting_address: VirtualAddress, kind: Process.PageFaultKind) noreturn {
     if (self.process.handlePageFault(faulting_address, kind)) {
-        proc.scheduler.scheduleCurrent(self);
+        scheduler.scheduleCurrent(self);
     } else {
         self.exit(libt.syscall.packResult(error.Crashed));
         self.lock.unlock();
-        proc.scheduler.scheduleNext(null, self.context.hart_index);
+        scheduler.scheduleNext(null, self.context.hart_index);
     }
 }
