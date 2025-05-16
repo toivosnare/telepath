@@ -36,15 +36,15 @@ pub fn parse(fdt_physical_start: PhysicalAddress) ParseResult {
         cpus,
     };
     var state: State = .start;
-    var initrd_start: ?u32 = null;
-    var initrd_end: ?u32 = null;
-    var memory_start: ?u32 = null;
-    var memory_size: ?u32 = null;
-    var plic_start: ?u32 = null;
-    var plic_size: ?u32 = null;
-    var clint_start: ?u32 = null;
-    var clint_size: ?u32 = null;
-    var timebase_frequency: ?u32 = null;
+    var initrd_start: ?usize = null;
+    var initrd_end: ?usize = null;
+    var memory_start: ?usize = null;
+    var memory_size: ?usize = null;
+    var plic_start: ?usize = null;
+    var plic_size: ?usize = null;
+    var clint_start: ?usize = null;
+    var clint_size: ?usize = null;
+    var timebase_frequency: ?usize = null;
     var hart_count: usize = 1;
 
     while (true) {
