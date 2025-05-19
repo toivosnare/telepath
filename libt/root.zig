@@ -88,6 +88,14 @@ pub fn call(wake_addr: *atomic.Value(u32), wait_addr: *atomic.Value(u32), expect
     return syscall.synchronize((&signal)[0..1], (&event)[0..1], if (timeout_us) |t| t else math.maxInt(usize));
 }
 
+pub inline fn readTime() usize {
+    var value: usize = undefined;
+    asm volatile ("rdtime %[value]"
+        : [value] "=r" (value),
+    );
+    return value;
+}
+
 const std = @import("std");
 const assert = std.debug.assert;
 const atomic = std.atomic;
