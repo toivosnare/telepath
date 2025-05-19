@@ -619,3 +619,82 @@ pub fn Fifo(
         }
     };
 }
+
+pub const SpinConfig = union(enum) {
+    constant: usize,
+    adaptive: struct {
+        spin_max: isize,
+        spin_estimate_initial: isize,
+        spin_estimate_refinement_rate: isize = 8,
+    },
+
+    pub const none: SpinConfig = .{ .constant = 0 };
+};
+pub fn Rpc(Req: type, Res: type, spin_config: SpinConfig) type {
+    return extern struct {
+        turn: atomic.Value(Turn),
+        request: Request,
+        response: Response,
+        spin_estimate: if (spin_config == .adaptive) isize else void,
+
+        pub const Request = Req;
+        pub const Response = Res;
+        pub const Turn = enum(u32) {
+            client = 0,
+            server = 1,
+        };
+        const Self = @This();
+
+        pub fn init(self: *Self) void {
+            self.turn.store(.client, .release);
+            if (spin_config == .adaptive) {
+                self.spin_estimate = spin_config.adaptive.spin_estimate_initial;
+            }
+        }
+
+        pub fn call(self: *Self) void {
+            self.turn.store(.server, .release);
+
+            var spin_count: if (spin_config == .constant) usize else isize = 0;
+            const spin_limit = switch (spin_config) {
+                .constant => |constant| constant,
+                .adaptive => |adaptive| @min(2 * self.spin_estimate, adaptive.spin_max),
+            };
+            defer {
+                if (spin_config == .adaptive)
+                    self.spin_estimate += @divTrunc(spin_count - self.spin_estimate, spin_config.adaptive.spin_estimate_refinement_rate);
+            }
+            while (spin_count < spin_limit) : (spin_count += 1) {
+                if (self.turn.load(.acquire) == .client)
+                    return;
+            }
+
+            while (self.turn.load(.acquire) != .client) {
+                _ = libt.call(@ptrCast(&self.turn), @ptrCast(&self.turn), @intFromEnum(Turn.server), null) catch |err| switch (err) {
+                    error.WouldBlock => {},
+                    else => unreachable,
+                };
+            }
+        }
+
+        pub fn wait(self: *Self) void {
+            var turn = self.turn.load(.acquire);
+            while (turn != .server) {
+                _ = libt.call(@ptrCast(&self.turn), @ptrCast(&self.turn), @intFromEnum(turn), null) catch |err| switch (err) {
+                    error.WouldBlock => {},
+                    else => unreachable,
+                };
+                turn = self.turn.load(.acquire);
+            }
+        }
+
+        pub fn serve(self: *Self, handler: *const fn () bool) void {
+            while (true) {
+                self.wait();
+                if (handler())
+                    break;
+                self.turn.store(.client, .release);
+            }
+        }
+    };
+}
