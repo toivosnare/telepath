@@ -5,6 +5,8 @@ const heap = std.heap;
 const mem = std.mem;
 const ArrayList = std.ArrayList;
 
+pub usingnamespace @import("root.zig");
+
 pub fn build(b: *Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -21,7 +23,7 @@ pub fn build(b: *Build) void {
     module.addOptions("options", options);
 }
 
-pub const service = @import("service.zig");
+const service = @import("service.zig");
 
 pub const ServiceOptions = struct {
     name: []const u8,
