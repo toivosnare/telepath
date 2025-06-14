@@ -73,7 +73,7 @@ pub fn waitMultiple(events: []syscall.WaitEvent, timeout_us: ?usize) syscall.Syn
     return syscall.synchronize(null, events, if (timeout_us) |t| t else math.maxInt(usize));
 }
 
-pub fn call(wake_addr: *atomic.Value(u32), wait_addr: *atomic.Value(u32), expected_value: u32, timeout_us: ?usize) syscall.SynchronizeError!usize {
+pub fn call(wake_addr: *atomic.Value(u32), wait_addr: *atomic.Value(u32), expected_value: u32, timeout_us: ?usize) syscall.SynchronizeError!void {
     const signal: syscall.WakeSignal = .{
         .address = wake_addr,
         .count = 1,
@@ -85,7 +85,9 @@ pub fn call(wake_addr: *atomic.Value(u32), wait_addr: *atomic.Value(u32), expect
             .expected_value = expected_value,
         } },
     };
-    return syscall.synchronize((&signal)[0..1], (&event)[0..1], if (timeout_us) |t| t else math.maxInt(usize));
+    const index = try syscall.synchronize((&signal)[0..1], (&event)[0..1], if (timeout_us) |t| t else math.maxInt(usize));
+    assert(index == 0);
+    return syscall.unpackResult(syscall.SynchronizeError!void, event.result);
 }
 
 pub inline fn readTime() usize {

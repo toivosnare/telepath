@@ -670,7 +670,7 @@ pub fn Rpc(Req: type, Res: type, spin_config: SpinConfig) type {
             }
 
             while (self.turn.load(.acquire) != .client) {
-                _ = libt.call(@ptrCast(&self.turn), @ptrCast(&self.turn), @intFromEnum(Turn.server), null) catch |err| switch (err) {
+                libt.call(@ptrCast(&self.turn), @ptrCast(&self.turn), @intFromEnum(Turn.server), null) catch |err| switch (err) {
                     error.WouldBlock => {},
                     else => unreachable,
                 };
@@ -680,7 +680,7 @@ pub fn Rpc(Req: type, Res: type, spin_config: SpinConfig) type {
         pub fn wait(self: *Self) void {
             var turn = self.turn.load(.acquire);
             while (turn != .server) {
-                _ = libt.call(@ptrCast(&self.turn), @ptrCast(&self.turn), @intFromEnum(turn), null) catch |err| switch (err) {
+                libt.call(@ptrCast(&self.turn), @ptrCast(&self.turn), @intFromEnum(turn), null) catch |err| switch (err) {
                     error.WouldBlock => {},
                     else => unreachable,
                 };
