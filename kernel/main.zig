@@ -217,7 +217,7 @@ export fn bootHartMain(boot_hart_id: Hart.Id, fdt_physical_start: PhysicalAddres
 
     const satp: riscv.satp.Type = .{
         .ppn = @bitCast(PhysicalPageNumber.fromPageTable(init_process.page_table)),
-        .asid = 0,
+        .asid = @intCast(init_process.id),
         .mode = .sv39,
     };
     mm.logical_offset = mm.logical_start -% heap_physical_start;
@@ -234,7 +234,7 @@ export fn secondaryHartMain(hart_index: Hart.Index) noreturn {
     const init_process = &proc.process_table[0].process;
     const satp: riscv.satp.Type = .{
         .ppn = @bitCast(PhysicalPageNumber.fromPageTable(init_process.page_table)),
-        .asid = 0,
+        .asid = @intCast(init_process.id),
         .mode = .sv39,
     };
     trampoline(hart_index, satp, mm.kernel_offset);

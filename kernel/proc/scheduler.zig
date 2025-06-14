@@ -98,7 +98,7 @@ fn switchContext(current_thread: ?*Thread, next_thread: *Thread, hart_index: Har
     if (current_thread == null or current_thread.?.process != next_thread.process) {
         riscv.satp.write(.{
             .ppn = @bitCast(PhysicalPageNumber.fromPageTable(next_thread.process.page_table)),
-            .asid = 0,
+            .asid = @intCast(next_thread.process.id),
             .mode = .sv39,
         });
         riscv.@"sfence.vma"(null, null);
