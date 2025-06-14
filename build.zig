@@ -4,6 +4,7 @@ const Step = Build.Step;
 
 pub fn build(b: *Build) void {
     const optimize = b.standardOptimizeOption(.{});
+    const hart_count = b.option(usize, "hart_count", "Select how many harts to use in QEMU") orelse 2;
 
     const kernel_package = b.dependency("kernel", .{ .optimize = optimize });
     const kernel = kernel_package.artifact("kernel");
@@ -43,9 +44,9 @@ pub fn build(b: *Build) void {
         "-bios",
         "default",
         "-smp",
-        "2",
+        b.fmt("{d}", .{hart_count}),
         "-m",
-        "1G",
+        "2G",
         "-kernel",
     };
     const run_cmd = b.addSystemCommand(&QEMU_ARGV);
@@ -54,7 +55,7 @@ pub fn build(b: *Build) void {
     run_cmd.addFileArg(init_tix);
     run_cmd.step.dependOn(b.getInstallStep());
 
-    const run_step = b.step("run", "Run the app");
+    const run_step = b.step("run", "Run the OS on QEMU");
     run_step.dependOn(&run_cmd.step);
 
     const debug_cmd = b.addSystemCommand(&QEMU_ARGV);
