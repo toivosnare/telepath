@@ -30,7 +30,7 @@ wait_events: []libt.syscall.WaitEvent,
 wait_timeout_next: ?*Thread,
 wait_timeout_time: u64,
 
-const max_wait_nodes = 8;
+const max_wait_nodes = 16;
 
 pub const Id = usize;
 
