@@ -11,17 +11,12 @@ pub fn build(b: *Build) void {
         .optimize = optimize,
     });
     const ns16550a = b.dependency("ns16550a", .{ .optimize = optimize });
-    const @"goldfish-rtc" = b.dependency("goldfish-rtc", .{ .optimize = optimize });
-    const @"virtio-blk" = b.dependency("virtio-blk", .{ .optimize = optimize });
-    const @"file-system" = b.dependency("file-system", .{ .optimize = optimize });
-    const shell = b.dependency("shell", .{ .optimize = optimize });
+    const benchmark = b.dependency("benchmark", .{ .optimize = optimize });
 
     const drivers = [_]*Step.Compile{
         ns16550a.artifact("ns16550a"),
-        @"goldfish-rtc".artifact("goldfish-rtc"),
-        @"virtio-blk".artifact("virtio-blk"),
-        @"file-system".artifact("file-system"),
-        shell.artifact("shell"),
+        benchmark.artifact("benchmark-server"),
+        benchmark.artifact("benchmark-client"),
     };
     for (drivers) |driver| {
         b.installArtifact(driver);
