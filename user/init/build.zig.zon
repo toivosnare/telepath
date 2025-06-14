@@ -10,20 +10,8 @@
         .ns16550a = .{
             .path = "../ns16550a",
         },
-        .@"smp-test" = .{
-            .path = "../smp-test",
-        },
-        .@"goldfish-rtc" = .{
-            .path = "../goldfish-rtc",
-        },
-        .@"virtio-blk" = .{
-            .path = "../virtio-blk",
-        },
-        .@"file-system" = .{
-            .path = "../file-system",
-        },
-        .shell = .{
-            .path = "../shell",
+        .benchmark = .{
+            .path = "../benchmark",
         },
     },
     .paths = .{
