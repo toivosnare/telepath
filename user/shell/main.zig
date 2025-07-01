@@ -26,9 +26,9 @@ pub fn main(args: []usize) !void {
     const writer = serial_driver.tx.writer();
     const reader = serial_driver.rx.reader();
 
-    const file_system_handle: Handle = @enumFromInt(args[2]);
+    const file_system_handle: Handle = @enumFromInt(args[0]);
     if (file_system_handle == .self) {
-        try writer.writeAll("Invalid file system handle\n");
+        try writer.print("Invalid file system handle: {d}\n", .{args[0]});
         return error.InvalidHandle;
     }
 
