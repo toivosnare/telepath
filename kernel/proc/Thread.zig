@@ -190,27 +190,10 @@ pub fn synchronize(self: *Thread, signals: []libt.syscall.WakeSignal, events: []
     for (signals) |signal|
         waken_thread_count += try proc.Futex.wake(self, @intFromPtr(signal.address), signal.count);
 
-    var waken_hart_count: usize = 0;
-    var hart_mask: usize = 0;
-    for (proc.harts) |*hart| {
-        if (waken_hart_count == waken_thread_count)
-            break;
-        if (hart.idling) {
-            hart.idling = false;
-            hart_mask |= @as(usize, 1) << @intCast(hart.id);
-            waken_hart_count += 1;
-        }
-    }
-    if (waken_hart_count != 0) {
-        sbi.ipi.sendIPI(.{ .mask = .{
-            .mask = hart_mask,
-            .base = 0,
-        } }) catch @panic("sending an IPI failed");
-    }
-
     defer {
         self.waitRemove();
         self.waitClear();
+        wakeHarts(waken_thread_count);
     }
 
     // TODO: Make sure reading the event fields do not trap.
@@ -255,8 +238,31 @@ pub fn synchronize(self: *Thread, signals: []libt.syscall.WakeSignal, events: []
     const hart_index = self.context.hart_index;
     self.lock.unlock();
 
+    // One of the waken threads can be run on this hart so do not wake up an extra hart.
+    wakeHarts(waken_thread_count -| 1);
+
     log.debug("Thread id={d} is waiting with {d} events", .{ self.id, events.len });
     scheduler.scheduleNext(null, hart_index);
+}
+
+fn wakeHarts(max_amount: usize) void {
+    var amount: usize = 0;
+    var hart_mask: usize = 0;
+    for (proc.harts) |*hart| {
+        if (amount == max_amount)
+            break;
+        if (hart.idling) {
+            hart.idling = false;
+            hart_mask |= @as(usize, 1) << @intCast(hart.id);
+            amount += 1;
+        }
+    }
+    if (amount != 0) {
+        sbi.ipi.sendIPI(.{ .mask = .{
+            .mask = hart_mask,
+            .base = 0,
+        } }) catch @panic("sending an IPI failed");
+    }
 }
 
 fn waitThread(self: *Thread, wait_node: *WaitNode, thread_handle: Handle) !?usize {
